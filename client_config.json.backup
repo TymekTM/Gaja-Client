@@ -1,0 +1,39 @@
+{
+  "user_id": "1",
+  "server_url": "ws://localhost:8001/ws/client1",
+  "client_version": "1.0.0",
+  "api_keys": {
+    "_comment": "API keys are now loaded from environment variables (.env file)",
+    "openai": ""
+  },
+  "wakeword": {
+    "enabled": true,
+    "sensitivity": 0.6,
+    "keyword": "gaja",
+    "device_id": 54,
+    "stt_silence_threshold_ms": 2000
+  },
+  "whisper": {
+    "model": "small",
+    "language": "en",
+    "device_id": 54
+  },
+  "overlay": {
+    "enabled": true,
+    "position": "top-right",
+    "size": {
+      "width": 400,
+      "height": 300
+    },
+    "transparency": 0.9
+  },
+  "audio": {
+    "input_device": 54,
+    "output_device": 21,
+    "sample_rate": 16000
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/client_{time:YYYY-MM-DD}.log"
+  }
+}

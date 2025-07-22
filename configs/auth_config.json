@@ -1,0 +1,41 @@
+{
+  "users": [
+    {
+      "user_id": "admin_d82f2b9672090bc6",
+      "username": "admin",
+      "email": "admin@gaja.local",
+      "password_hash": "1c836f1b3651a72fd30029ecd50c27a620211190cfa4098194ad882506ba6a95",
+      "salt": "9cd3af47bf74f06015b0cdb3893f1c3783286892e36ae74ab91746828a1b19e8",
+      "role": "super_admin",
+      "permissions": [
+        "use_advanced_memory",
+        "use_real_time_transcription",
+        "webhook_access",
+        "use_web_ui",
+        "use_premium_voices",
+        "custom_voice_training",
+        "view_audit_logs",
+        "use_tts",
+        "advanced_analytics",
+        "on_premise_deployment",
+        "plugin_management",
+        "multi_language_support",
+        "sso_integration",
+        "use_voice_commands",
+        "use_overlay",
+        "use_azure_api",
+        "api_access",
+        "user_management",
+        "system_configuration",
+        "use_cloud_backup",
+        "use_openai_api"
+      ],
+      "created_at": "2025-06-11T10:26:17.280494",
+      "last_login": null,
+      "is_active": true,
+      "metadata": {}
+    }
+  ],
+  "failed_attempts": {},
+  "last_updated": "2025-06-11T10:26:17.280868"
+}

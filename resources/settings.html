@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gaja - Ustawienia</title>
+    <link rel="icon" type="image/x-icon" href="/gaja.ico">
+    <link rel="shortcut icon" type="image/x-icon" href="/gaja.ico">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            text-align: center;
+            color: #4a5568;
+            margin-bottom: 30px;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .logo h2 {
+            color: #667eea;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .settings-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .settings-section h3 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .icon {
+            margin-right: 10px;
+            font-size: 1.3rem;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #4a5568;
+            font-weight: 500;
+        }
+
+        select, input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            background: white;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+            margin-right: 10px;
+            transform: scale(1.2);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: flex-end;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+            transform: translateY(-1px);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #48bb78;
+        }
+
+        .status-offline {
+            background: #f56565;
+        }
+
+        .refresh-btn {
+            padding: 8px 16px;
+            margin-left: 10px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .refresh-btn:hover {
+            background: #5a67d8;
+        }
+
+        .device-list {
+            background: #f7fafc;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #718096;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h2>🤖 GAJA</h2>
+        </div>
+        <h1>Ustawienia Asystenta</h1>
+
+        <!-- Status Section -->
+        <div class="settings-section">
+            <h3><span class="icon">📊</span>Status Systemu</h3>
+            <div class="form-group">
+                <label>Stan połączenia:</label>
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <span class="status-indicator status-offline" id="connection-status"></span>
+                        <span id="connection-text">Sprawdzanie połączenia...</span>
+                    </div>
+                    <button class="refresh-btn" onclick="loadConnectionStatus()">🔄 Odśwież</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audio Settings -->
+        <div class="settings-section">
+            <h3><span class="icon">🎤</span>Ustawienia Audio</h3>
+
+            <div class="form-group">
+                <label for="input-device">Urządzenie wejściowe (mikrofon):</label>
+                <div style="display: flex; align-items: center;">
+                    <select id="input-device">
+                        <option value="">Ładowanie urządzeń...</option>
+                    </select>
+                    <button class="refresh-btn" onclick="refreshAudioDevices()">🔄</button>
+                </div>
+                <div class="device-list" id="input-devices-info">
+                    Dostępne urządzenia wejściowe zostaną załadowane automatycznie
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="output-device">Urządzenie wyjściowe (głośniki):</label>
+                <div style="display: flex; align-items: center;">
+                    <select id="output-device">
+                        <option value="">Ładowanie urządzeń...</option>
+                    </select>
+                    <button class="refresh-btn" onclick="refreshAudioDevices()">🔄</button>
+                </div>
+                <div class="device-list" id="output-devices-info">
+                    Dostępne urządzenia wyjściowe zostaną załadowane automatycznie
+                </div>
+            </div>
+        </div>
+
+        <!-- Voice Settings -->
+        <div class="settings-section">
+            <h3><span class="icon">🗣️</span>Ustawienia Głosu</h3>
+
+            <div class="form-group">
+                <label for="wake-word">Słowo aktywacyjne:</label>
+                <input type="text" id="wake-word" value="gaja" placeholder="np. gaja, asystent">
+            </div>
+
+            <div class="form-group">
+                <label for="sensitivity">Czułość wykrywania (0.1 - 1.0):</label>
+                <input type="range" id="sensitivity" min="0.1" max="1.0" step="0.05" value="0.6">
+                <span id="sensitivity-value">0.6</span>
+            </div>
+
+            <div class="form-group">
+                <label for="language">Język:</label>
+                <select id="language">
+                    <option value="pl-PL">Polski</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="en-GB">English (UK)</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Overlay Settings -->
+        <div class="settings-section">
+            <h3><span class="icon">🖥️</span>Ustawienia Overlay</h3>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="overlay-enabled" checked>
+                <label for="overlay-enabled">Włącz overlay</label>
+            </div>
+
+            <div class="form-group">
+                <label for="overlay-position">Pozycja overlay:</label>
+                <select id="overlay-position">
+                    <option value="top-right">Prawy górny róg</option>
+                    <option value="top-left">Lewy górny róg</option>
+                    <option value="bottom-right">Prawy dolny róg</option>
+                    <option value="bottom-left">Lewy dolny róg</option>
+                    <option value="center">Centrum</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="overlay-opacity">Przezroczystość (0.1 - 1.0):</label>
+                <input type="range" id="overlay-opacity" min="0.1" max="1.0" step="0.1" value="0.9">
+                <span id="opacity-value">0.9</span>
+            </div>
+        </div>
+
+        <!-- Daily Briefing Settings -->
+        <div class="settings-section">
+            <h3><span class="icon">📅</span>Ustawienia Daily Briefing</h3>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="briefing-enabled" checked>
+                <label for="briefing-enabled">Włącz daily briefing</label>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="startup-briefing" checked>
+                <label for="startup-briefing">Briefing przy starcie aplikacji</label>
+            </div>
+
+            <div class="form-group">
+                <label for="briefing-time">Godzina zaplanowanego briefingu:</label>
+                <input type="time" id="briefing-time" value="08:00">
+            </div>
+
+            <div class="form-group">
+                <label for="location">Lokalizacja (dla pogody):</label>
+                <input type="text" id="location" value="Sosnowiec,PL" placeholder="np. Warszawa,PL">
+            </div>
+        </div>
+
+        <!-- Button Group -->
+        <div class="button-group">
+            <button class="btn btn-secondary" onclick="closeSettings()">Anuluj</button>
+            <button class="btn btn-primary" onclick="saveSettings()">Zapisz ustawienia</button>
+        </div>
+    </div>
+
+    <script>
+        // Enhanced debug function
+        function debugLog(message, data = null) {
+            const timestamp = new Date().toISOString();
+            console.log(`[${timestamp}] [Settings] ${message}`, data || '');
+        }
+
+        debugLog('settings.html script loaded', { location: window.location.href, protocol: window.location.protocol });
+
+        // Check if we're running via HTTP server (fallback mode)
+        function isHTTPMode() {
+            return window.location.protocol === 'http:' || window.location.protocol === 'https:';
+        }
+
+        // Check if Tauri API is available
+        function checkTauriAPI() {
+            if (isHTTPMode()) {
+                debugLog('Running in HTTP mode - using HTTP API instead of Tauri');
+                return false;
+            }
+
+            debugLog('Checking Tauri API availability...');
+            debugLog('window.__TAURI__ exists: ' + (typeof window.__TAURI__ !== 'undefined'));
+
+            if (typeof window.__TAURI__ !== 'undefined') {
+                debugLog('Available Tauri methods: ' + Object.keys(window.__TAURI__).join(', '));
+                debugLog('invoke available: ' + (typeof window.__TAURI__.invoke !== 'undefined'));
+                return true;
+            } else {
+                debugLog('BŁĄD: window.__TAURI__ nie jest dostępne!');
+                return false;
+            }
+        }
+
+        // HTTP API functions for fallback mode
+        async function httpApiCall(endpoint, method = 'GET', data = null) {
+            const baseUrl = window.location.origin;
+            const url = `${baseUrl}${endpoint}`;
+
+            debugLog(`HTTP API call: ${method} ${url}`, data);
+
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            };
+
+            if (data) {
+                options.body = JSON.stringify(data);
+            }
+
+            const response = await fetch(url, options);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            return await response.json();
+        }
+
+        // Initialize settings when page loads
+        window.addEventListener('DOMContentLoaded', async () => {
+            debugLog('DOM loaded, initializing...');
+
+            const useTauri = checkTauriAPI();
+
+            if (!useTauri) {
+                debugLog('Using HTTP API mode');
+                document.getElementById('connection-status').className = 'status-indicator status-online';
+                document.getElementById('connection-text').textContent = 'HTTP API Mode';
+            }
+
+            await loadConnectionStatus();
+            await loadAudioDevices();
+            await loadCurrentSettings();
+            setupEventListeners();
+        });
+
+        // Load connection status
+        async function loadConnectionStatus() {
+            debugLog('Loading connection status...');
+
+            const statusIndicator = document.getElementById('connection-status');
+            const statusText = document.getElementById('connection-text');
+
+            try {
+                let connectionStatus;
+
+                if (isHTTPMode()) {
+                    connectionStatus = await httpApiCall('/api/connection_status');
+                } else {
+                    connectionStatus = await window.__TAURI__.invoke('get_connection_status');
+                }
+
+                debugLog('Connection status received:', connectionStatus);
+
+                if (connectionStatus.connected) {
+                    statusIndicator.className = 'status-indicator status-online';
+                    statusText.textContent = `Połączony z serwerem (port ${connectionStatus.port})`;
+
+                    // Update server status if available
+                    if (connectionStatus.server_status) {
+                        const serverStatus = connectionStatus.server_status.status;
+                        console.log('Server status:', serverStatus);
+                        if (serverStatus === 'Error') {
+                            statusText.textContent += ' - Serwer w stanie błędu';
+                        } else if (serverStatus === 'Ready') {
+                            statusText.textContent += ' - Serwer gotowy';
+                        } else if (serverStatus === 'Initializing...') {
+                            statusText.textContent += ' - Serwer inicjalizuje';
+                        }
+                    }
+                } else {
+                    statusIndicator.className = 'status-indicator status-offline';
+                    statusText.textContent = connectionStatus.error || 'Brak połączenia z serwerem';
+                }
+            } catch (error) {
+                console.error('Błąd sprawdzania stanu połączenia:', error);
+                statusIndicator.className = 'status-indicator status-offline';
+                statusText.textContent = 'Błąd: ' + error.toString();
+            }
+        }
+
+        // Setup event listeners for real-time updates
+        function setupEventListeners() {
+            // Sensitivity slider
+            const sensitivitySlider = document.getElementById('sensitivity');
+            const sensitivityValue = document.getElementById('sensitivity-value');
+            sensitivitySlider.addEventListener('input', (e) => {
+                sensitivityValue.textContent = e.target.value;
+            });
+
+            // Opacity slider
+            const opacitySlider = document.getElementById('overlay-opacity');
+            const opacityValue = document.getElementById('opacity-value');
+            opacitySlider.addEventListener('input', (e) => {
+                opacityValue.textContent = e.target.value;
+            });
+        }
+
+        // Load audio devices from system
+        async function loadAudioDevices() {
+            try {
+                let devices;
+
+                if (isHTTPMode()) {
+                    devices = await httpApiCall('/api/audio_devices');
+                } else {
+                    devices = await window.__TAURI__.invoke('get_audio_devices');
+                }
+
+                // Update input devices
+                const inputSelect = document.getElementById('input-device');
+                inputSelect.innerHTML = '<option value="">Wybierz urządzenie wejściowe</option>';
+                devices.input_devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.id;
+                    option.textContent = device.name;
+                    if (device.is_default) {
+                        option.selected = true;
+                    }
+                    inputSelect.appendChild(option);
+                });
+
+                // Update output devices
+                const outputSelect = document.getElementById('output-device');
+                outputSelect.innerHTML = '<option value="">Wybierz urządzenie wyjściowe</option>';
+                devices.output_devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.id;
+                    option.textContent = device.name;
+                    if (device.is_default) {
+                        option.selected = true;
+                    }
+                    outputSelect.appendChild(option);
+                });
+
+                // Update device info
+                document.getElementById('input-devices-info').textContent =
+                    `Znaleziono ${devices.input_devices.length} urządzeń wejściowych`;
+                document.getElementById('output-devices-info').textContent =
+                    `Znaleziono ${devices.output_devices.length} urządzeń wyjściowych`;
+
+            } catch (error) {
+                console.error('Błąd ładowania urządzeń audio:', error);
+                document.getElementById('input-devices-info').textContent =
+                    'Błąd ładowania urządzeń wejściowych';
+                document.getElementById('output-devices-info').textContent =
+                    'Błąd ładowania urządzeń wyjściowych';
+            }
+        }
+
+        // Refresh audio devices
+        async function refreshAudioDevices() {
+            await loadAudioDevices();
+        }
+
+        // Load current settings
+        async function loadCurrentSettings() {
+            try {
+                let settings;
+
+                if (isHTTPMode()) {
+                    settings = await httpApiCall('/api/current_settings');
+                } else {
+                    settings = await window.__TAURI__.invoke('get_current_settings');
+                }
+
+                // Audio settings
+                if (settings.audio && settings.audio.input_device) {
+                    document.getElementById('input-device').value = settings.audio.input_device;
+                }
+                if (settings.audio && settings.audio.output_device) {
+                    document.getElementById('output-device').value = settings.audio.output_device;
+                }
+
+                // Voice settings
+                if (settings.voice) {
+                    document.getElementById('wake-word').value = settings.voice.wake_word || 'gaja';
+                    document.getElementById('sensitivity').value = settings.voice.sensitivity || 0.6;
+                    document.getElementById('sensitivity-value').textContent = settings.voice.sensitivity || 0.6;
+                    document.getElementById('language').value = settings.voice.language || 'pl-PL';
+                } else if (settings.wakeword) {
+                    // Fallback to wakeword settings
+                    document.getElementById('wake-word').value = settings.wakeword.keyword || 'gaja';
+                    document.getElementById('sensitivity').value = settings.wakeword.sensitivity || 0.6;
+                    document.getElementById('sensitivity-value').textContent = settings.wakeword.sensitivity || 0.6;
+                }
+
+                // Overlay settings
+                if (settings.overlay) {
+                    document.getElementById('overlay-enabled').checked = settings.overlay.enabled !== false;
+                    document.getElementById('overlay-position').value = settings.overlay.position || 'top-right';
+                    document.getElementById('overlay-opacity').value = settings.overlay.opacity || 0.9;
+                    document.getElementById('opacity-value').textContent = settings.overlay.opacity || 0.9;
+                }
+
+                // Daily briefing settings
+                if (settings.daily_briefing) {
+                    document.getElementById('briefing-enabled').checked = settings.daily_briefing.enabled !== false;
+                    document.getElementById('startup-briefing').checked = settings.daily_briefing.startup_briefing !== false;
+                    document.getElementById('briefing-time').value = settings.daily_briefing.briefing_time || '08:00';
+                    document.getElementById('location').value = settings.daily_briefing.location || 'Sosnowiec,PL';
+                }
+
+                console.log('Ustawienia załadowane pomyślnie');
+            } catch (error) {
+                console.error('Błąd ładowania ustawień:', error);
+                // Use defaults if loading fails
+                document.getElementById('wake-word').value = 'gaja';
+                document.getElementById('sensitivity').value = 0.6;
+                document.getElementById('sensitivity-value').textContent = 0.6;
+                document.getElementById('language').value = 'pl-PL';
+                document.getElementById('overlay-enabled').checked = true;
+                document.getElementById('overlay-position').value = 'top-right';
+                document.getElementById('overlay-opacity').value = 0.9;
+                document.getElementById('opacity-value').textContent = 0.9;
+                document.getElementById('briefing-enabled').checked = true;
+                document.getElementById('startup-briefing').checked = true;
+                document.getElementById('briefing-time').value = '08:00';
+                document.getElementById('location').value = 'Sosnowiec,PL';
+            }
+        }
+
+        // Save settings
+        async function saveSettings() {
+            const settings = {
+                audio: {
+                    input_device: document.getElementById('input-device').value,
+                    output_device: document.getElementById('output-device').value
+                },
+                voice: {
+                    wake_word: document.getElementById('wake-word').value,
+                    sensitivity: parseFloat(document.getElementById('sensitivity').value),
+                    language: document.getElementById('language').value
+                },
+                overlay: {
+                    enabled: document.getElementById('overlay-enabled').checked,
+                    position: document.getElementById('overlay-position').value,
+                    opacity: parseFloat(document.getElementById('overlay-opacity').value)
+                },
+                daily_briefing: {
+                    enabled: document.getElementById('briefing-enabled').checked,
+                    startup_briefing: document.getElementById('startup-briefing').checked,
+                    briefing_time: document.getElementById('briefing-time').value,
+                    location: document.getElementById('location').value
+                }
+            };
+
+            try {
+                let result;
+
+                if (isHTTPMode()) {
+                    result = await httpApiCall('/api/save_settings', 'POST', { settings });
+                } else {
+                    await window.__TAURI__.invoke('save_settings', { settings });
+                    result = { success: true };
+                }
+
+                if (result.success) {
+                    alert('Ustawienia zostały zapisane!');
+                    closeSettings();
+                } else {
+                    alert('Błąd podczas zapisywania ustawień!');
+                }
+            } catch (error) {
+                console.error('Błąd zapisywania ustawień:', error);
+                alert('Błąd podczas zapisywania ustawień: ' + error.message);
+            }
+        }
+
+        // Close settings window
+        async function closeSettings() {
+            try {
+                if (isHTTPMode()) {
+                    // HTTP mode - just close the window/tab
+                    window.close();
+                } else {
+                    await window.__TAURI__.invoke('close_settings');
+                }
+            } catch (error) {
+                console.error('Błąd zamykania okna ustawień:', error);
+                window.close(); // Fallback
+            }
+        }
+    </script>
+</body>
+</html>

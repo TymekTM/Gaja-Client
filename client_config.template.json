@@ -1,0 +1,108 @@
+{
+  "server": {
+    "host": "localhost",
+    "port": 8001,
+    "websocket_url": "ws://localhost:8001/ws",
+    "timeout": 30,
+    "reconnect_interval": 5,
+    "max_reconnect_attempts": 10
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "chunk_size": 1024,
+    "input_device": "default",
+    "output_device": "default",
+    "buffer_size": 2048
+  },
+  "wake_word": {
+    "enabled": true,
+    "model": "gaja",
+    "threshold": 0.5,
+    "timeout": 30,
+    "verification_threshold": 0.7,
+    "min_activation_interval": 2
+  },
+  "speech": {
+    "provider": "edge",
+    "language": "pl-PL",
+    "voice": "pl-PL-ZofiaNeural",
+    "rate": "medium",
+    "volume": 100,
+    "pitch": "medium"
+  },
+  "recognition": {
+    "provider": "faster_whisper",
+    "model": "base",
+    "language": "pl",
+    "device": "auto",
+    "compute_type": "float16",
+    "beam_size": 5,
+    "temperature": 0.0,
+    "condition_on_previous_text": false
+  },
+  "ui": {
+    "overlay_enabled": false,
+    "tray_enabled": true,
+    "notifications": true,
+    "auto_start": false,
+    "minimize_to_tray": true,
+    "show_startup_notification": true
+  },
+  "features": {
+    "voice_activation": true,
+    "continuous_listening": false,
+    "auto_response": true,
+    "keyboard_shortcuts": true,
+    "push_to_talk": false,
+    "noise_reduction": true,
+    "echo_cancellation": true
+  },
+  "keyboard_shortcuts": {
+    "push_to_talk": "ctrl+shift+g",
+    "toggle_microphone": "ctrl+shift+m",
+    "toggle_overlay": "ctrl+shift+o",
+    "open_settings": "ctrl+shift+s",
+    "exit_application": "ctrl+shift+q"
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "max_file_size": "10MB",
+    "backup_count": 5,
+    "console_output": true
+  },
+  "performance": {
+    "max_memory_mb": 512,
+    "cpu_limit_percent": 50,
+    "gpu_acceleration": "auto",
+    "thread_count": "auto"
+  },
+  "privacy": {
+    "local_processing_preferred": true,
+    "store_audio": false,
+    "analytics_enabled": false,
+    "crash_reporting": true
+  },
+  "legacy": {
+    "user_id": "1",
+    "client_version": "1.0.0-beta",
+    "wakeword": {
+      "sensitivity": 0.6,
+      "keyword": "gaja",
+      "stt_silence_threshold_ms": 2000
+    },
+    "whisper": {
+      "model": "small",
+      "language": "en"
+    },
+    "overlay": {
+      "position": "top-right",
+      "size": {
+        "width": 400,
+        "height": 300
+      },
+      "transparency": 0.9
+    }
+  }
+}
