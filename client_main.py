@@ -15,6 +15,25 @@ from pathlib import Path
 import websockets
 from loguru import logger
 
+# Configure logging levels to reduce verbosity
+import logging
+import os
+# Set environment variables to reduce warnings
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("filelock").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub.file_download").setLevel(logging.WARNING)
+logging.getLogger("PIL").setLevel(logging.WARNING)
+logging.getLogger("PIL.Image").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.INFO)
+logging.getLogger("websockets.client").setLevel(logging.INFO)
+logging.getLogger("websockets.server").setLevel(logging.INFO)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+logging.getLogger("audio_modules").setLevel(logging.INFO)
+
 # Dodaj ścieżkę główną projektu do PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -200,7 +219,7 @@ class ClientApp:
             self.update_status("Initializing...")
 
             # Initialize external Tauri overlay only
-            if self.config.get("overlay", {}).get("enabled", True):
+            if self.config.get("ui", {}).get("overlay_enabled", False):
                 await self.start_overlay()
             # Initialize wakeword detector
             wakeword_config = self.config.get("wakeword", {})
@@ -2423,8 +2442,13 @@ class StatusHTTPHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        """Override to use custom logging."""
-        logger.debug(f"HTTP: {format % args}")
+        """Override to reduce HTTP logging verbosity."""
+        # Only log errors and important requests
+        if "error" in (format % args).lower() or "500" in (format % args):
+            logger.warning(f"HTTP: {format % args}")
+        # Silently ignore routine requests like status checks
+        elif not any(x in (format % args) for x in ["/api/status", "/status/stream"]):
+            logger.debug(f"HTTP: {format % args}")
 
 
 async def main():

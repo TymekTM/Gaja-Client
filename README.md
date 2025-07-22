@@ -1,6 +1,6 @@
 # 🎙️ GAJA Client
 
-**Voice Assistant Client for GAJA Assistant - Plug & Play Beta Release**
+**Voice Assistant Client for GAJA Assistant - Beta Release**
 
 GAJA Client is a voice-activated assistant that connects to GAJA Server for AI processing. Features wake word detection, speech recognition, text-to-speech, and an optional visual overlay.
 
@@ -111,11 +111,20 @@ python start.py --skip-setup
 # Force install dependencies
 python start.py --install-deps
 
+# Development mode with verbose logging
+python start.py --dev
+
 # Connect to remote server
 python start.py --server-host 192.168.1.100
 
 # Use different port
 python start.py --server-port 9001
+
+# Force start even if server not reachable
+python start.py --force
+
+# Skip system requirement checks
+python start.py --skip-checks
 
 # Use custom config file
 python start.py --config my_config.json
@@ -258,13 +267,32 @@ python -m pytest tests/ -v
 
 ### Development Mode
 
+Development mode provides enhanced debugging and verbose logging:
+
 ```bash
-# Start with debug logging
+# Start with debug logging and detailed error traces
 python start.py --dev
 
+# Skip system checks in development
+python start.py --dev --skip-checks
+
+# Force start without server connection check
+python start.py --dev --force
+
 # Monitor logs
-tail -f logs/client_startup.log
+tail -f logs/client_startup.log  # Linux/Mac
+Get-Content logs/client_startup.log -Wait  # Windows PowerShell
 ```
+
+### Runtime Modes
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| **First Run** | `python start.py` | Shows setup wizard, installs deps |
+| **Normal** | `python start.py --skip-setup` | Production mode with all checks |
+| **Development** | `python start.py --dev` | Verbose logging, detailed errors |
+| **Force Start** | `python start.py --force` | Start without server connection |
+| **Remote Server** | `python start.py --server-host IP` | Connect to remote GAJA Server |
 
 ### Audio Configuration
 
@@ -294,6 +322,7 @@ python list_audio_devices.py
    ```bash
    python list_audio_devices.py
    # Set correct input_device in config
+   # Or use: python start.py --skip-checks
    ```
 
 2. **Cannot connect to server**
@@ -302,17 +331,56 @@ python list_audio_devices.py
    curl http://localhost:8001/health
    # Or use different host/port
    python start.py --server-host 192.168.1.100
+   # Or force start anyway
+   python start.py --force
    ```
 
-3. **Wake word not working**
+3. **Dependencies installation failed**
+   ```bash
+   # Try upgrading pip first
+   python -m pip install --upgrade pip
+   # Then install dependencies
+   python start.py --install-deps
+   # Or manually install
+   pip install -r requirements_client.txt
+   ```
+
+4. **Wake word not working**
    - Check microphone permissions
    - Adjust threshold in config
    - Test with `python test_wakeword.py`
+   - Try: `python start.py --dev` for debug info
 
-4. **Audio quality issues**
+5. **Audio quality issues**
    - Update audio drivers
    - Try different audio devices
    - Adjust sample rate and chunk size
+   - Use: `python start.py --skip-checks` to bypass audio checks
+
+6. **First-run setup issues**
+   ```bash
+   # Skip setup and use defaults
+   python start.py --skip-setup
+   # Or delete setup marker and try again
+   rm .setup_complete
+   python start.py
+   ```
+
+### Debug Mode
+
+For detailed troubleshooting:
+
+```bash
+# Full debug mode
+python start.py --dev
+
+# Skip all checks and force start
+python start.py --dev --skip-checks --force
+
+# Check what went wrong
+cat logs/client_startup.log  # Linux/Mac
+type logs\client_startup.log  # Windows
+```
 
 ## 📊 Performance
 
@@ -344,4 +412,4 @@ MIT License - see LICENSE file for details.
 
 **Status: ✅ Beta Ready**
 **Version: 1.0.0-beta**
-**Last Updated: July 22, 2025**
+**Last Updated: January 22, 2025**

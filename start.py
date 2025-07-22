@@ -90,9 +90,59 @@ class GajaClientStarter:
             return False
         return True
     
+    def check_system_requirements(self) -> bool:
+        """Check system requirements for voice client."""
+        issues = []
+        
+        # Check available memory
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            if memory.total < 2 * 1024 * 1024 * 1024:  # 2GB
+                issues.append("Minimum 2GB RAM required")
+        except ImportError:
+            self.logger.warning("Cannot check memory requirements")
+        
+        # Check audio devices (optional check)
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            input_devices = [d for d in devices if d['max_input_channels'] > 0]
+            output_devices = [d for d in devices if d['max_output_channels'] > 0]
+            
+            if not input_devices:
+                issues.append("No microphone found")
+            if not output_devices:
+                issues.append("No speakers/headphones found")
+                
+        except ImportError:
+            self.logger.warning("Cannot check audio devices (sounddevice not installed)")
+        except Exception as e:
+            self.logger.warning(f"Audio device check failed: {e}")
+        
+        if issues:
+            self.logger.warning("System requirement issues found:")
+            for issue in issues:
+                self.logger.warning(f"  - {issue}")
+            return False
+        
+        return True
+    
+    def check_server_reachability(self, host: str, port: int) -> bool:
+        """Check if server is reachable."""
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
+    
     def install_dependencies(self) -> bool:
         """Install required dependencies automatically."""
-        self.logger.info("Installing dependencies...")
+        self.logger.info("Checking and installing dependencies...")
         
         requirements_file = self.client_root / "requirements_client.txt"
         if not requirements_file.exists():
@@ -105,7 +155,14 @@ class GajaClientStarter:
                 "edge-tts>=7.0.0",
                 "openwakeword>=0.6.0",
                 "numpy>=2.1.0",
-                "tkinter"  # Should be included with Python
+                "loguru>=0.7.2",
+                "requests>=2.31.0", 
+                "pydantic>=2.5.0",
+                "psutil>=5.9.6",
+                "aiofiles>=0.8.0",
+                "python-dotenv>=1.0.0",
+                "pystray>=0.19.5",
+                "pillow>=10.0.0"
             ]
             
             with open(requirements_file, 'w') as f:
@@ -361,22 +418,56 @@ class GajaClientStarter:
             self.logger.warning(f"Server connection test failed: {e}")
             return False
     
-    async def start_client(self, config: Dict):
+    async def start_client(self, config: Dict, development: bool = False):
         """Start the GAJA client."""
         self.logger.info("Starting GAJA Client...")
         
         # Import client modules after dependencies are installed
         try:
-            from client_main import GajaClient
+            # Try to import main client module
+            if development:
+                self.logger.info("Starting in development mode")
+            
+            # Check if main client exists
+            client_main_path = self.client_root / "client_main.py"
+            if not client_main_path.exists():
+                self.logger.error(f"client_main.py not found at {client_main_path}")
+                self.logger.error("Make sure you have the complete GAJA Client installation")
+                return False
+            
+            # Try dynamic import
+            sys.path.insert(0, str(self.client_root))
+            client_main = __import__('client_main')
+            
+            if hasattr(client_main, 'GajaClient'):
+                GajaClient = client_main.GajaClient
+            elif hasattr(client_main, 'main'):
+                # Fallback: if there's a main function, run it
+                self.logger.info("Running client via main function")
+                await client_main.main()
+                return True
+            else:
+                self.logger.error("No GajaClient class or main function found in client_main.py")
+                return False
+                
         except ImportError as e:
             self.logger.error(f"Failed to import client modules: {e}")
             self.logger.error("Please check if all dependencies are installed")
+            self.logger.error("Try: python start.py --install-deps")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error importing client: {e}")
             return False
         
         # Test server connection
         websocket_url = config["server"]["websocket_url"]
         if not await self.test_server_connection(websocket_url):
-            self.logger.warning("Cannot connect to server, client may not work properly")
+            if development:
+                self.logger.warning("Server connection failed, but continuing in development mode")
+            else:
+                self.logger.error("Cannot connect to server. Please ensure GAJA Server is running.")
+                self.logger.error(f"Expected server at: {websocket_url}")
+                return False
         
         # Start client
         try:
@@ -384,11 +475,13 @@ class GajaClientStarter:
             await client.run()
         except Exception as e:
             self.logger.error(f"Client startup failed: {e}")
+            if development:
+                self.logger.error("Full traceback:", exc_info=True)
             return False
         
         return True
     
-    def print_startup_info(self, config: Dict):
+    def print_startup_info(self, config: Dict, development: bool = False):
         """Print startup information."""
         print("\n" + "="*60)
         print("🎙️ GAJA Client - Beta Release")
@@ -399,8 +492,16 @@ class GajaClientStarter:
         print(f"Language: {config['speech']['language']}")
         print(f"Wake Word: {'Enabled' if config['wake_word']['enabled'] else 'Disabled'}")
         print(f"Overlay: {'Enabled' if config['ui']['overlay_enabled'] else 'Disabled'}")
+        print(f"Mode: {'Development' if development else 'Production'}")
         print("="*60)
-        print("Say 'Gaja' to wake up the assistant (if enabled)")
+        print("Configuration:")
+        print(f"  - Config file: {self.config_file}")
+        print(f"  - Logs directory: {self.log_dir}")
+        print(f"  - Audio input device: {config.get('audio', {}).get('input_device', 'default')}")
+        print(f"  - Audio output device: {config.get('audio', {}).get('output_device', 'default')}")
+        print("="*60)
+        if config['wake_word']['enabled']:
+            print("Say 'Gaja' to wake up the assistant")
         print("Press Ctrl+C to stop the client")
         print()
     
@@ -416,7 +517,11 @@ class GajaClientStarter:
         if args.install_deps and not self.install_dependencies():
             return 1
         
-        # Step 3: Check if first run and show setup UI
+        # Step 3: Check system requirements (warnings only)
+        if not args.skip_checks:
+            self.check_system_requirements()
+        
+        # Step 4: Check if first run and show setup UI
         if self.is_first_run() and not args.skip_setup:
             self.logger.info("First run detected, showing setup UI")
             
@@ -434,7 +539,7 @@ class GajaClientStarter:
             # Load existing configuration
             config = self.load_config()
         
-        # Override config with command line arguments
+        # Step 5: Override config with command line arguments
         if args.server_host:
             config["server"]["host"] = args.server_host
             config["server"]["websocket_url"] = f"ws://{args.server_host}:{config['server']['port']}/ws"
@@ -443,18 +548,31 @@ class GajaClientStarter:
             config["server"]["port"] = args.server_port
             config["server"]["websocket_url"] = f"ws://{config['server']['host']}:{args.server_port}/ws"
         
-        # Step 4: Print startup info
-        self.print_startup_info(config)
+        # Step 6: Check server reachability (if not in dev mode)
+        if not args.dev:
+            host = config["server"]["host"]
+            port = config["server"]["port"]
+            if not self.check_server_reachability(host, port):
+                self.logger.warning(f"Cannot reach server at {host}:{port}")
+                self.logger.warning("Make sure GAJA Server is running")
+                if not args.force:
+                    self.logger.error("Use --force to start anyway")
+                    return 1
         
-        # Step 5: Start client
+        # Step 7: Print startup info
+        self.print_startup_info(config, args.dev)
+        
+        # Step 8: Start client
         try:
-            await self.start_client(config)
+            await self.start_client(config, development=args.dev)
             return 0
         except KeyboardInterrupt:
             self.logger.info("Client stopped by user")
             return 0
         except Exception as e:
             self.logger.error(f"Client failed: {e}")
+            if args.dev:
+                self.logger.error("Full traceback:", exc_info=True)
             return 1
 
 
@@ -469,16 +587,32 @@ Examples:
   python start.py --skip-setup        # Skip setup UI (use existing config)
   python start.py --install-deps      # Force dependency installation
   python start.py --server-host 192.168.1.100  # Connect to remote server
+  python start.py --dev               # Development mode with verbose logging
+  python start.py --force             # Start even if server not reachable
 
 First Run:
   1. python start.py --install-deps   # Install dependencies
-  2. Follow setup wizard             # Configure basic settings
+  2. Follow setup wizard              # Configure basic settings
   3. Make sure GAJA Server is running
   4. Start talking to GAJA!
+
+Development:
+  python start.py --dev --skip-checks # Development mode, skip system checks
+  python start.py --force             # Force start without server check
+
+Production:
+  python start.py                     # Normal start with all checks
+  python start.py --server-host remote.server.com --server-port 8001
 
 Advanced:
   Edit client_config.json for detailed configuration
         """
+    )
+    
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Start in development mode (verbose logging, detailed errors)"
     )
     
     parser.add_argument(
@@ -491,6 +625,18 @@ Advanced:
         "--skip-setup",
         action="store_true",
         help="Skip first-run setup UI"
+    )
+    
+    parser.add_argument(
+        "--skip-checks",
+        action="store_true",
+        help="Skip system requirement checks"
+    )
+    
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force start even if server not reachable"
     )
     
     parser.add_argument(
@@ -520,6 +666,28 @@ Advanced:
     if args.config:
         starter.config_file = Path(args.config)
     
+    # Set logging level for development mode
+    if args.dev:
+        logging.getLogger().setLevel(logging.DEBUG)
+        starter.logger.setLevel(logging.DEBUG)
+    else:
+        # Set reduced logging for production mode
+        import os
+        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+        logging.getLogger("filelock").setLevel(logging.WARNING) 
+        logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+        logging.getLogger("huggingface_hub.file_download").setLevel(logging.WARNING)
+        logging.getLogger("PIL").setLevel(logging.WARNING)
+        logging.getLogger("PIL.Image").setLevel(logging.WARNING)
+        logging.getLogger("websockets").setLevel(logging.INFO)
+        logging.getLogger("websockets.client").setLevel(logging.INFO)
+        logging.getLogger("websockets.server").setLevel(logging.INFO)
+        logging.getLogger("asyncio").setLevel(logging.WARNING)
+        logging.getLogger("audio_modules").setLevel(logging.INFO)
+    
     # Run the client
     try:
         exit_code = asyncio.run(starter.run(args))
@@ -529,6 +697,9 @@ Advanced:
         sys.exit(0)
     except Exception as e:
         print(f"Fatal error: {e}")
+        if args.dev:
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 
