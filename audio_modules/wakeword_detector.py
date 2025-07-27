@@ -53,12 +53,11 @@ def get_base_path():
     if getattr(sys, "frozen", False):
         # In bundled mode, resources live next to the launcher executable
         return BASE_DIR
-    # Development mode: Go to project root instead of client
-    # This ensures we find resources/openWakeWord correctly
+    # Development mode: Use client directory instead of project root
+    # This ensures we find resources/openWakeWord correctly in Gaja-Client folder
     current_file_dir = os.path.dirname(os.path.abspath(__file__))  # audio_modules
-    client_dir = os.path.dirname(current_file_dir)  # client
-    project_root = os.path.dirname(client_dir)  # Asystent
-    return project_root
+    client_dir = os.path.dirname(current_file_dir)  # Gaja-Client
+    return client_dir
 
 
 # Constants for audio recording

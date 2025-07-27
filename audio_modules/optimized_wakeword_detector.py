@@ -281,11 +281,8 @@ class OptimizedWakeWordDetector:
 
             # Locate model directory
             current_dir = Path(__file__).parent
-            project_root = current_dir.parent.parent
-            model_dir = project_root / "resources" / "openWakeWord"
-
-            if not model_dir.exists():
-                model_dir = project_root / "client" / "resources" / "openWakeWord"
+            client_root = current_dir.parent  # Go up to Gaja-Client directory
+            model_dir = client_root / "resources" / "openWakeWord"
 
             if model_dir.exists():
                 try:

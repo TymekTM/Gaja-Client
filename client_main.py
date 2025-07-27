@@ -11,9 +11,19 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+import base64
+import tempfile
 
 import websockets
 from loguru import logger
+
+# Import pygame for audio playback
+try:
+    import pygame
+    pygame_available = True
+except ImportError:
+    pygame_available = False
+    logger.warning("pygame not available for audio playback")
 
 # Configure logging levels to reduce verbosity
 import logging
@@ -132,6 +142,15 @@ class ClientApp:
             logger.info(f"🔗 Server URL already set to: {self.server_url}")
         self.running = False
 
+        # Auto reconnect properties
+        self.server_connected = False
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 0  # 0 means infinite attempts
+        self.reconnect_delay = 5.0  # Start with 5 seconds
+        self.max_reconnect_delay = 60.0  # Max 60 seconds between attempts
+        self.reconnect_task = None
+        self.server_offline_notified = False
+
         # Initialize settings manager
         self.settings_manager = None
         if SETTINGS_AVAILABLE:
@@ -222,7 +241,13 @@ class ClientApp:
             if self.config.get("ui", {}).get("overlay_enabled", False):
                 await self.start_overlay()
             # Initialize wakeword detector
-            wakeword_config = self.config.get("wakeword", {})
+            wakeword_config = self.config.get("wakeword", {}).copy()
+            
+            # Ensure wakeword detector uses the same input device as configured in audio settings
+            audio_config = self.config.get("audio", {})
+            if "input_device" in audio_config and "device_id" not in wakeword_config:
+                wakeword_config["device_id"] = audio_config["input_device"]
+                logger.info(f"Using audio input device {audio_config['input_device']} for wakeword detection")
 
             # First, load audio modules lazily (after dependencies are installed)
             audio_available = await self._load_audio_modules()
@@ -366,6 +391,18 @@ class ClientApp:
             logger.info(f"Attempting to connect to: {self.server_url}")
             self.websocket = await websockets.connect(self.server_url)
             logger.info(f"Connected to server: {self.server_url}")
+            
+            # Mark as connected and reset reconnect state
+            self.server_connected = True
+            self.reconnect_attempts = 0
+            self.reconnect_delay = 5.0  # Reset delay
+            self.server_offline_notified = False
+            
+            # Notify user that server is back online if we were reconnecting
+            if self.reconnect_attempts > 0 or hasattr(self, '_was_reconnecting'):
+                await self.notify_server_online()
+                if hasattr(self, '_was_reconnecting'):
+                    delattr(self, '_was_reconnecting')
 
             # Sprawdź czy to pierwszy start dnia i poproś o briefing
             await self.request_startup_briefing()
@@ -373,10 +410,135 @@ class ClientApp:
         except Exception as e:
             logger.error(f"Failed to connect to server: {e}")
             logger.error(f"Server URL was: {self.server_url}")
+            self.server_connected = False
             import traceback
-
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
+
+    async def connect_to_server_with_retry(self):
+        """Nawiąż połączenie z serwerem z automatycznym ponowieniem."""
+        while self.running:
+            try:
+                await self.connect_to_server()
+                return True  # Successfully connected
+            except Exception as e:
+                self.server_connected = False
+                self.reconnect_attempts += 1
+                
+                # Notify user server is offline on first attempt
+                if not self.server_offline_notified:
+                    await self.notify_server_offline()
+                    self.server_offline_notified = True
+                
+                # Check if we should give up (if max attempts is set)
+                if self.max_reconnect_attempts > 0 and self.reconnect_attempts >= self.max_reconnect_attempts:
+                    logger.error(f"Max reconnect attempts ({self.max_reconnect_attempts}) reached. Giving up.")
+                    return False
+                
+                logger.warning(f"Connection failed (attempt {self.reconnect_attempts}). Retrying in {self.reconnect_delay}s...")
+                await asyncio.sleep(self.reconnect_delay)
+                
+                # Exponential backoff with maximum delay
+                self.reconnect_delay = min(self.reconnect_delay * 1.5, self.max_reconnect_delay)
+        
+        return False
+
+    async def notify_server_offline(self):
+        """Powiadom użytkownika, że serwer jest offline."""
+        try:
+            offline_message = "Serwer jest obecnie niedostępny. Próbuję połączyć się ponownie..."
+            
+            # Update overlay with offline status
+            self.last_tts_text = offline_message
+            self.update_status("Serwer offline")
+            await self.show_overlay()
+            
+            # Speak notification if TTS is available
+            if self.tts:
+                try:
+                    self.tts_playing = True
+                    await self.tts.speak(offline_message)
+                    logger.info("Server offline notification spoken")
+                except Exception as e:
+                    logger.error(f"Error speaking offline notification: {e}")
+                finally:
+                    self.tts_playing = False
+                    await self.hide_overlay()
+                    self.update_status("Reconnecting...")
+            else:
+                # Show message for a few seconds if no TTS
+                await asyncio.sleep(3)
+                await self.hide_overlay()
+                self.update_status("Reconnecting...")
+                
+            # Update system tray
+            if self.tray_manager:
+                self.tray_manager.update_status("Offline - Reconnecting...")
+                
+        except Exception as e:
+            logger.error(f"Error notifying server offline: {e}")
+
+    async def notify_server_online(self):
+        """Powiadom użytkownika, że serwer jest z powrotem online."""
+        try:
+            online_message = "Serwer jest teraz dostępny. Połączenie przywrócone."
+            
+            # Update overlay with online status
+            self.last_tts_text = online_message
+            self.update_status("Serwer online")
+            await self.show_overlay()
+            
+            # Speak notification if TTS is available
+            if self.tts:
+                try:
+                    self.tts_playing = True
+                    await self.tts.speak(online_message)
+                    logger.info("Server online notification spoken")
+                except Exception as e:
+                    logger.error(f"Error speaking online notification: {e}")
+                finally:
+                    self.tts_playing = False
+                    await self.hide_overlay()
+                    self.update_status("słucham")
+            else:
+                # Show message for a few seconds if no TTS
+                await asyncio.sleep(3)
+                await self.hide_overlay()
+                self.update_status("słucham")
+                
+            # Update system tray
+            if self.tray_manager:
+                self.tray_manager.update_status("Connected")
+                
+        except Exception as e:
+            logger.error(f"Error notifying server online: {e}")
+
+    async def start_reconnect_task(self):
+        """Uruchom zadanie reconnect w tle."""
+        if self.reconnect_task and not self.reconnect_task.done():
+            return  # Already running
+            
+        self.reconnect_task = asyncio.create_task(self._reconnect_loop())
+
+    async def _reconnect_loop(self):
+        """Pętla reconnect działająca w tle."""
+        self._was_reconnecting = True
+        
+        while self.running and not self.server_connected:
+            try:
+                logger.info("Attempting to reconnect to server...")
+                success = await self.connect_to_server_with_retry()
+                
+                if success:
+                    logger.info("Successfully reconnected to server")
+                    break
+                else:
+                    logger.error("Failed to reconnect to server")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error in reconnect loop: {e}")
+                await asyncio.sleep(self.reconnect_delay)
 
     async def request_startup_briefing(self):
         """Poproś serwer o briefing startowy."""
@@ -496,33 +658,99 @@ class ClientApp:
             logger.error(f"Error requesting day summary: {e}")
 
     async def send_message(self, message: dict):
-        """Wyślij wiadomość do serwera."""
-        if self.websocket:
+        """Wyślij wiadomość do serwera z obsługą błędów połączenia."""
+        if self.websocket and self.server_connected:
             try:
                 logger.info(f"Sending message to server: {message}")
                 await self.websocket.send(json.dumps(message))
                 logger.debug(f"Sent message: {message['type']}")
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("Connection lost while sending message")
+                self.server_connected = False
+                self.websocket = None
+                await self.start_reconnect_task()
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
+                # Check if it's a connection error
+                if "connection" in str(e).lower() or "socket" in str(e).lower():
+                    self.server_connected = False
+                    self.websocket = None
+                    await self.start_reconnect_task()
+        else:
+            logger.warning(f"Cannot send message - server not connected: {message['type']}")
+            # Try to start reconnect if not already running
+            if not self.server_connected:
+                await self.start_reconnect_task()
 
     async def listen_for_messages(self):
-        """Nasłuchuj wiadomości od serwera."""
+        """Nasłuchuj wiadomości od serwera z auto reconnect."""
         try:
             while self.running:
-                if self.websocket:
+                if self.websocket and self.server_connected:
                     try:
                         message = await self.websocket.recv()
                         data = json.loads(message)
                         await self.handle_server_message(data)
                     except websockets.exceptions.ConnectionClosed:
-                        logger.warning("Connection to server lost")
-                        break
+                        logger.warning("Connection to server lost - ConnectionClosed")
+                        self.server_connected = False
+                        self.websocket = None
+                        
+                        # Start reconnect process
+                        await self.start_reconnect_task()
+                        
+                        # Wait for reconnection or exit
+                        while self.running and not self.server_connected:
+                            await asyncio.sleep(1)
+                    except ConnectionResetError:
+                        logger.warning("Connection to server lost - ConnectionResetError")
+                        self.server_connected = False
+                        self.websocket = None
+                        
+                        # Start reconnect process
+                        await self.start_reconnect_task()
+                        
+                        # Wait for reconnection or exit
+                        while self.running and not self.server_connected:
+                            await asyncio.sleep(1)
+                    except OSError as e:
+                        logger.warning(f"Connection to server lost - OSError: {e}")
+                        self.server_connected = False
+                        self.websocket = None
+                        
+                        # Start reconnect process
+                        await self.start_reconnect_task()
+                        
+                        # Wait for reconnection or exit
+                        while self.running and not self.server_connected:
+                            await asyncio.sleep(1)
+                            
                     except json.JSONDecodeError as e:
                         logger.error(f"Invalid JSON from server: {e}")
                     except asyncio.CancelledError:
                         logger.info("WebSocket listener cancelled")
                         break
+                    except Exception as e:
+                        # Check if it's any connection-related error
+                        error_msg = str(e).lower()
+                        if any(keyword in error_msg for keyword in [
+                            'connection', 'socket', 'closed', 'reset', 'broken', 'timeout'
+                        ]):
+                            logger.warning(f"Connection to server lost - Exception: {e}")
+                            self.server_connected = False
+                            self.websocket = None
+                            
+                            # Start reconnect process
+                            await self.start_reconnect_task()
+                            
+                            # Wait for reconnection or exit
+                            while self.running and not self.server_connected:
+                                await asyncio.sleep(1)
+                        else:
+                            logger.error(f"Error receiving message from server (non-connection): {e}")
+                            # For non-connection errors, continue but log them
                 else:
+                    # No connection, wait and check again
                     try:
                         await asyncio.sleep(0.1)
                     except asyncio.CancelledError:
@@ -532,6 +760,11 @@ class ClientApp:
             logger.info("WebSocket listener cancelled")
         except Exception as e:
             logger.error(f"Error listening for messages: {e}")
+            # Try to reconnect on unexpected errors
+            if self.running:
+                self.server_connected = False
+                self.websocket = None
+                await self.start_reconnect_task()
 
     async def handle_server_message(self, data: dict):
         """Obsłuż wiadomość od serwera."""
@@ -542,9 +775,12 @@ class ClientApp:
             f"Received message from server: type={message_type}, data keys={list(data.keys())}"
         )
         if message_type == "ai_response":
-            logger.info(
-                f"AI response data structure: {data}"
-            )  # Change to INFO for visibility
+            # Log AI response without TTS audio data to avoid spam
+            response_data = data.copy()
+            if 'data' in response_data and 'tts_audio_b64' in response_data['data']:
+                response_data['data'] = {k: v for k, v in response_data['data'].items() if k != 'tts_audio_b64'}
+                response_data['data']['tts_audio_size'] = f"{len(data['data'].get('tts_audio_b64', ''))} chars"
+            logger.debug(f"AI response data structure: {response_data}")  # Change to DEBUG
 
         # Track message limits and counts if provided
         if "message_limit" in data:
@@ -612,6 +848,7 @@ class ClientApp:
             # Extract response from the data structure
             message_data = data.get("data", {})
             response = message_data.get("response", "")
+            tts_audio_b64 = message_data.get("tts_audio")  # Server-generated TTS audio
             logger.info(f"AI Response received: {response}")
 
             # Check if response is empty or None
@@ -641,15 +878,100 @@ class ClientApp:
                     # Show overlay immediately when starting TTS
                     await self.show_overlay()
 
-                    # Play TTS response
-                    if self.tts:
+                    # Play TTS response - prioritize server-generated audio
+                    if tts_audio_b64:
+                        try:
+                            # Server provided audio - try to play it
+                            import base64
+                            import tempfile
+                            
+                            # Decode audio from base64
+                            audio_data = base64.b64decode(tts_audio_b64)
+                            logger.debug(f"Received TTS audio: {len(audio_data)} bytes")
+                            
+                            # Save to temporary file and play
+                            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp_file:
+                                tmp_file.write(audio_data)
+                                tmp_file_path = tmp_file.name
+                            
+                            # Try to play audio file directly with pygame
+                            self.tts_playing = True
+                            self.update_status("mówię")
+                            self.last_tts_text = text
+                            
+                            # Get volume from server TTS config
+                            tts_config = data.get("tts_config", {})
+                            volume = tts_config.get("volume", 1.0)
+                            
+                            if pygame_available:
+                                try:
+                                    import pygame
+                                    pygame.mixer.init()
+                                    pygame.mixer.music.load(tmp_file_path)
+                                    pygame.mixer.music.set_volume(min(volume, 1.0))  # pygame volume is 0.0-1.0
+                                    pygame.mixer.music.play()
+                                    
+                                    # Wait for audio to finish
+                                    while pygame.mixer.music.get_busy():
+                                        await asyncio.sleep(0.1)
+                                        
+                                    pygame.mixer.quit()
+                                    logger.info("Server TTS audio played successfully with pygame")
+                                except Exception as pygame_err:
+                                    logger.error(f"Pygame playback failed: {pygame_err}")
+                                    # Fallback to system audio player
+                                    import subprocess
+                                    import os
+                                    if os.name == 'nt':  # Windows
+                                        subprocess.run(['powershell', '-c', f'(New-Object Media.SoundPlayer "{tmp_file_path}").PlaySync()'], check=False)
+                                    else:  # Linux/Mac
+                                        subprocess.run(['mpg123', tmp_file_path], check=False)
+                                    logger.info("Server TTS audio played successfully with system player fallback")
+                            else:
+                                # Fallback to system audio player
+                                import subprocess
+                                import os
+                                if os.name == 'nt':  # Windows
+                                    subprocess.run(['powershell', '-c', f'(New-Object Media.SoundPlayer "{tmp_file_path}").PlaySync()'], check=False)
+                                else:  # Linux/Mac
+                                    subprocess.run(['mpg123', tmp_file_path], check=False)
+                                logger.info("Server TTS audio played successfully with system player")
+                            
+                            # Clean up temp file
+                            try:
+                                import os
+                                os.unlink(tmp_file_path)
+                            except:
+                                pass
+                            
+                        except Exception as server_tts_e:
+                            logger.error(f"Server TTS playback error: {server_tts_e}")
+                            # Fallback to local TTS with server text
+                            if self.tts and text:
+                                try:
+                                    self.tts_playing = True
+                                    self.update_status("mówię")
+                                    self.last_tts_text = text
+                                    await self.tts.speak(text)
+                                    logger.info("Fallback: Used local TTS with server text")
+                                except Exception as local_tts_e:
+                                    logger.error(f"Local TTS fallback error: {local_tts_e}")
+                        finally:
+                            self.tts_playing = False
+                            self.wake_word_detected = False
+                            self.recording_command = False
+                            await self.hide_overlay()
+                            self.update_status("słucham")
+                            
+                    elif self.tts and text:
+                        # No server audio, use local TTS with server text
                         try:
                             self.tts_playing = True
                             self.update_status("mówię")
                             # Ensure text is set during TTS playback
                             self.last_tts_text = text
                             await self.tts.speak(text)
-                            logger.info("TTS response played")
+                            logger.info("Local TTS response played")
                         except Exception as tts_e:
                             logger.error(f"TTS error: {tts_e}")
                         finally:
@@ -664,7 +986,7 @@ class ClientApp:
                                 "słucham"
                             )  # Return to listening immediately
                     else:
-                        logger.warning("TTS not available")
+                        logger.warning("No TTS available and no server audio")
                         self.wake_word_detected = False
                         self.update_status(
                             "słucham"
@@ -744,8 +1066,152 @@ class ClientApp:
             else:
                 logger.warning("Handshake failed with server")
 
-        else:
-            logger.warning(f"Unknown message type: {message_type}")
+        elif message_type == "clarification_request":
+            # Handle clarification request from server
+            logger.info("Received clarification request from server")
+            
+            # Extract clarification data - data is nested inside main data structure
+            clarification_data = data.get("data", {})
+            question = clarification_data.get("question", "")
+            tts_audio_b64 = clarification_data.get("tts_audio")  # Server-generated TTS audio
+            
+            if question:
+                logger.info(f"Clarification question: {question}")
+                
+                # Update overlay with clarification question
+                self.last_tts_text = question
+                self.update_status("wyjaśnienie")
+                
+                # Show overlay
+                await self.show_overlay()
+                
+                # Play TTS for clarification - prioritize server audio
+                if tts_audio_b64:
+                    try:
+                        # Server provided audio - try to play it
+                        import base64
+                        import tempfile
+                        
+                        audio_data = base64.b64decode(tts_audio_b64)
+                        logger.debug(f"Playing clarification TTS audio: {len(audio_data)} bytes")
+                        
+                        # Get volume from server TTS config
+                        tts_config = data.get("tts_config", {})
+                        volume = tts_config.get("volume", 1.0)
+                        
+                        # Save to temporary file and play with pygame
+                        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+                            temp_file.write(audio_data)
+                            temp_file_path = temp_file.name
+                        
+                        try:
+                            import pygame
+                            pygame.mixer.init()
+                            pygame.mixer.music.load(temp_file_path)
+                            pygame.mixer.music.set_volume(min(volume, 1.0))  # pygame volume is 0.0-1.0
+                            pygame.mixer.music.play()
+                            
+                            # Wait for audio to finish
+                            while pygame.mixer.music.get_busy():
+                                await asyncio.sleep(0.1)
+                            
+                            logger.info("Server clarification TTS audio finished")
+                            
+                            # After TTS completion, restart recording and play keyword detection sound
+                            await self.restart_recording_after_clarification()
+                        
+                        except Exception as pygame_err:
+                            logger.error(f"Failed to play server clarification audio with pygame: {pygame_err}")
+                            # Fallback to local TTS
+                            if self.tts:
+                                try:
+                                    self.tts_playing = True
+                                    await self.tts.speak(question)
+                                    logger.info("Fallback clarification TTS completed")
+                                    # After TTS completion, restart recording and play keyword detection sound
+                                    await self.restart_recording_after_clarification()
+                                except Exception as tts_err:
+                                    logger.error(f"Fallback clarification TTS failed: {tts_err}")
+                                finally:
+                                    self.tts_playing = False
+                        finally:
+                            # Clean up temp file
+                            try:
+                                import os
+                                os.unlink(temp_file_path)
+                            except:
+                                pass
+                    
+                    except Exception as audio_err:
+                        logger.error(f"Failed to process server clarification audio: {audio_err}")
+                        # Fallback to local TTS
+                        if self.tts:
+                            try:
+                                self.tts_playing = True
+                                await self.tts.speak(question)
+                                logger.info("Fallback clarification TTS completed")
+                            except Exception as tts_err:
+                                logger.error(f"Fallback clarification TTS failed: {tts_err}")
+                            finally:
+                                self.tts_playing = False
+                
+                else:
+                    # No server audio, use local TTS
+                    if self.tts:
+                        try:
+                            self.tts_playing = True
+                            await self.tts.speak(question)
+                            logger.info("Local clarification TTS completed")
+                        except Exception as tts_err:
+                            logger.error(f"Local clarification TTS failed: {tts_err}")
+                        finally:
+                            self.tts_playing = False
+                    else:
+                        logger.warning("No TTS available for clarification")
+                
+                # After TTS finishes, start listening for clarification answer
+                self.update_status("czekam na odpowiedź")
+                # The wakeword detection should already be running, so user can just speak
+                
+            else:
+                logger.warning("Empty clarification question received")
+
+    async def restart_recording_after_clarification(self):
+        """Restart recording and play keyword detection sound after clarification."""
+        try:
+            # Update status to listening
+            self.update_status("słucham")
+            
+            # Hide overlay
+            await self.hide_overlay()
+            
+            # Play keyword detection sound if available
+            try:
+                import pygame
+                # Path to keyword detection sound (you may need to add this file)
+                keyword_sound_path = "resources/sounds/keyword_detected.wav"
+                if pygame_available:  # Use global variable
+                    pygame.mixer.init()
+                    try:
+                        pygame.mixer.Sound(keyword_sound_path).play()
+                        logger.debug("Played keyword detection sound")
+                    except:
+                        # Fallback - create a simple beep sound
+                        logger.debug("Using system beep as keyword sound")
+                        import winsound
+                        winsound.Beep(800, 200)  # 800Hz for 200ms
+                    pygame.mixer.quit()
+            except Exception as sound_err:
+                logger.debug(f"Could not play keyword sound: {sound_err}")
+            
+            # Ensure wakeword detection is active
+            if hasattr(self, 'wakeword_detector'):
+                logger.info("Wakeword detection ready for clarification response")
+            else:
+                logger.warning("Wakeword detector not available")
+                
+        except Exception as e:
+            logger.error(f"Error restarting recording after clarification: {e}")
 
     async def on_wakeword_detected(self, query: str = None):
         """Callback wywoływany po wykryciu słowa aktywującego i transkrypcji."""
@@ -773,12 +1239,14 @@ class ClientApp:
                     active_title = get_active_window_title()
                     message = {
                         "type": "query",
-                        "query": query,
-                        "context": {
-                            "source": "voice",
-                            "user_name": "Voice User",
-                            "active_window_title": active_title,
-                            "track_active_window_setting": True,
+                        "data": {
+                            "query": query,
+                            "context": {
+                                "source": "voice",
+                                "user_name": "Voice User",
+                                "active_window_title": active_title,
+                                "track_active_window_setting": True,
+                            },
                         },
                     }
                     await self.send_message(message)
@@ -1117,11 +1585,18 @@ class ClientApp:
                 else:
                     logger.warning("Failed to start system tray")
 
-            # Try to connect to server (but don't fail if can't connect)
+            # Try to connect to server with retry (but don't fail if can't connect)
             try:
-                await self.connect_to_server()
-                logger.info("Connected to server successfully")
-                self.update_status("Connected")
+                success = await self.connect_to_server_with_retry()
+                if success:
+                    logger.info("Connected to server successfully")
+                    self.update_status("Connected")
+                else:
+                    logger.warning("Could not connect to server after retries")
+                    logger.warning(
+                        "Running in standalone mode - overlay and local features will work"
+                    )
+                    self.update_status("Offline Mode")
             except Exception as e:
                 logger.warning(f"Could not connect to server: {e}")
                 logger.warning(
@@ -1134,29 +1609,40 @@ class ClientApp:
             # Set status to ready with correct Polish status
             self.update_status("słucham")
 
-            # Listen for server messages (or just keep running if no server)
-            if self.websocket:
-                # Start command queue processor alongside websocket listener and proactive check
+            # Listen for server messages (or run with reconnect logic)
+            # Create tasks that will run independently
+            logger.info("🚀 Starting main client tasks...")
+            
+            # Create long-running tasks
+            message_task = asyncio.create_task(self.listen_for_messages())
+            command_task = asyncio.create_task(self.process_command_queue())
+            
+            # Wait for tasks to complete (they should run indefinitely)
+            try:
+                await asyncio.gather(
+                    message_task,
+                    command_task,
+                    return_exceptions=True  # Don't let one task failure kill others
+                )
+            except asyncio.CancelledError:
+                logger.info("🛑 Main tasks cancelled")
+                # Cancel remaining tasks
+                if not message_task.done():
+                    message_task.cancel()
+                if not command_task.done():
+                    command_task.cancel()
                 try:
-                    await asyncio.gather(
-                        self.listen_for_messages(),
-                        self.process_command_queue(),
-                        # self.periodic_proactive_check(),  # DISABLED: Temporarily disabled for release
-                    )
-                except asyncio.CancelledError:
-                    logger.info("Main tasks cancelled")
-            else:
-                # Standalone mode - just keep running with wakeword detection
-                logger.info("Running in standalone mode - use Ctrl+C to stop")
-                try:
-                    await self.process_command_queue()  # Just process commands
-                except asyncio.CancelledError:
-                    logger.info("Command queue processor cancelled")
+                    await asyncio.gather(message_task, command_task, return_exceptions=True)
+                except:
+                    pass
 
         except KeyboardInterrupt:
-            logger.info("Client interrupted by user")
+            logger.info("🛑 Client interrupted by user")
+        except asyncio.CancelledError:
+            logger.info("🛑 Client cancelled (CancelledError)")
         except Exception as e:
-            logger.error(f"Error in client main loop: {e}")
+            logger.error(f"❌ Error in client main loop: {e}")
+            logger.error(f"❌ Exception type: {type(e).__name__}")
         finally:
             await self.cleanup()
 
@@ -1344,6 +1830,15 @@ class ClientApp:
         """Wyczyść zasoby przed zamknięciem."""
         try:
             self.running = False
+
+            # Stop reconnect task if running
+            if self.reconnect_task and not self.reconnect_task.done():
+                self.reconnect_task.cancel()
+                try:
+                    await self.reconnect_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info("Reconnect task stopped")
 
             # Stop system tray first
             if self.tray_manager:

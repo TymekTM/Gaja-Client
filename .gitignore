@@ -181,3 +181,4 @@ cython_debug/
 .cursorindexingignore
 /.hf_cache
 client_config.json
+.setup_complete

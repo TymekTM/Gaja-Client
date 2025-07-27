@@ -128,6 +128,28 @@ class GajaClientStarter:
         
         return True
     
+    def get_available_audio_devices(self):
+        """Get list of available audio input devices."""
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            input_devices = [
+                {
+                    "id": i,
+                    "name": d['name'],
+                    "channels": d.get('max_input_channels', 0)
+                }
+                for i, d in enumerate(devices) 
+                if d.get('max_input_channels', 0) > 0
+            ]
+            return input_devices
+        except ImportError:
+            self.logger.warning("sounddevice not available for device listing")
+            return [{"id": "default", "name": "Default Microphone", "channels": 1}]
+        except Exception as e:
+            self.logger.warning(f"Error getting audio devices: {e}")
+            return [{"id": "default", "name": "Default Microphone", "channels": 1}]
+    
     def check_server_reachability(self, host: str, port: int) -> bool:
         """Check if server is reachable."""
         try:
@@ -238,7 +260,7 @@ class GajaClientStarter:
         
         root = tk.Tk()
         root.title("GAJA Assistant - First Run Setup")
-        root.geometry("600x500")
+        root.geometry("600x600")
         root.resizable(False, False)
         
         # Center window
@@ -257,6 +279,18 @@ class GajaClientStarter:
                 setup_result["speech_provider"] = speech_provider_var.get()
                 setup_result["recognition_provider"] = recognition_provider_var.get()
                 setup_result["language"] = language_var.get()
+                
+                # Audio settings
+                selected_mic = microphone_var.get()
+                if selected_mic and "ID:" in selected_mic:
+                    # Extract device ID from selection (format: "Device Name (ID: 0)")
+                    mic_id = selected_mic.split("ID: ")[1].rstrip(")")
+                    try:
+                        setup_result["microphone_id"] = int(mic_id) if mic_id.isdigit() else mic_id
+                    except ValueError:
+                        setup_result["microphone_id"] = "default"
+                else:
+                    setup_result["microphone_id"] = "default"
                 
                 # Feature settings
                 setup_result["overlay_enabled"] = overlay_var.get()
@@ -314,26 +348,42 @@ class GajaClientStarter:
                                      state="readonly", width=27)
         language_combo.grid(row=7, column=1, sticky=tk.W)
         
+        # Audio settings
+        ttk.Label(main_frame, text="Audio Settings", 
+                 font=("Arial", 12, "bold")).grid(row=8, column=0, columnspan=2, 
+                                                  sticky=tk.W, pady=(20, 10))
+        
+        # Microphone selection
+        ttk.Label(main_frame, text="Microphone:").grid(row=9, column=0, sticky=tk.W)
+        audio_devices = self.get_available_audio_devices()
+        microphone_var = tk.StringVar()
+        mic_values = [f"{d['name']} (ID: {d['id']})" for d in audio_devices]
+        mic_combo = ttk.Combobox(main_frame, textvariable=microphone_var, 
+                                values=mic_values, state="readonly", width=27)
+        if mic_values:
+            mic_combo.set(mic_values[0])  # Select first device by default
+        mic_combo.grid(row=9, column=1, sticky=tk.W)
+        
         # Feature settings
         ttk.Label(main_frame, text="Features", 
-                 font=("Arial", 12, "bold")).grid(row=8, column=0, columnspan=2, 
+                 font=("Arial", 12, "bold")).grid(row=10, column=0, columnspan=2, 
                                                   sticky=tk.W, pady=(20, 10))
         
         overlay_var = tk.BooleanVar(value=os.getenv("OVERLAY_ENABLED", "false").lower() == "true")
         ttk.Checkbutton(main_frame, text="Enable Visual Overlay (Optional)", 
-                       variable=overlay_var).grid(row=9, column=0, columnspan=2, sticky=tk.W)
+                       variable=overlay_var).grid(row=11, column=0, columnspan=2, sticky=tk.W)
         
         autostart_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(main_frame, text="Start with Windows", 
-                       variable=autostart_var).grid(row=10, column=0, columnspan=2, sticky=tk.W)
+                       variable=autostart_var).grid(row=12, column=0, columnspan=2, sticky=tk.W)
         
         wakeword_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(main_frame, text="Enable Wake Word Detection (\"Gaja\")", 
-                       variable=wakeword_var).grid(row=11, column=0, columnspan=2, sticky=tk.W)
+                       variable=wakeword_var).grid(row=13, column=0, columnspan=2, sticky=tk.W)
         
         # Info text
         info_text = tk.Text(main_frame, height=4, width=70, wrap=tk.WORD)
-        info_text.grid(row=12, column=0, columnspan=2, pady=(20, 0))
+        info_text.grid(row=14, column=0, columnspan=2, pady=(20, 0))
         info_text.insert(tk.END, 
             "ℹ️ GAJA Assistant will connect to the server to provide AI-powered voice assistance. "
             "Make sure the GAJA Server is running before starting the client. "
@@ -342,7 +392,7 @@ class GajaClientStarter:
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=13, column=0, columnspan=2, pady=(20, 0))
+        button_frame.grid(row=15, column=0, columnspan=2, pady=(20, 0))
         
         ttk.Button(button_frame, text="Cancel", 
                   command=root.destroy).pack(side=tk.LEFT, padx=(0, 10))
@@ -372,6 +422,10 @@ class GajaClientStarter:
         config["recognition"]["provider"] = setup_data["recognition_provider"]
         config["speech"]["language"] = setup_data["language"]
         config["recognition"]["language"] = setup_data["language"].split("-")[0]
+        
+        # Audio device settings
+        if "microphone_id" in setup_data:
+            config["audio"]["input_device"] = setup_data["microphone_id"]
         
         config["ui"]["overlay_enabled"] = setup_data["overlay_enabled"]
         config["ui"]["auto_start"] = setup_data["auto_start"]
