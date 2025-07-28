@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 GAJA Client - Voice Assistant with First-Run Setup
-Beta release with automatic setup UI and dependency management.
+Enhanced with setup completion check and modern GUI.
 """
 
 import argparse
@@ -14,7 +14,7 @@ import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 # Minimal imports for startup
 try:
@@ -23,7 +23,7 @@ except ImportError:
     websockets = None
 
 
-def load_env_file(env_path: Path = None):
+def load_env_file(env_path: Optional[Path] = None):
     """Load environment variables from .env file."""
     if env_path is None:
         env_path = Path(__file__).parent / ".env"
@@ -55,7 +55,7 @@ def load_env_file(env_path: Path = None):
 
 
 class GajaClientStarter:
-    """Main client starter with first-run setup UI."""
+    """Main client starter with enhanced setup management."""
     
     def __init__(self):
         # Load environment variables first
@@ -63,7 +63,7 @@ class GajaClientStarter:
         
         self.client_root = Path(__file__).parent
         self.config_file = self.client_root / "client_config.json"
-        self.setup_complete_file = self.client_root / ".setup_complete"
+        self.setup_complete_file = self.client_root / "setup_complete.lock"
         self.log_dir = self.client_root / "logs"
         
         # Setup basic logging
@@ -82,6 +82,153 @@ class GajaClientStarter:
                 logging.StreamHandler(sys.stdout)
             ]
         )
+    
+    def check_setup_status(self) -> Dict[str, Any]:
+        """Check current setup status using setup_manager."""
+        try:
+            # Try to import setup manager
+            setup_manager_path = self.client_root / "setup_manager.py"
+            if setup_manager_path.exists():
+                sys.path.insert(0, str(self.client_root))
+                setup_manager = __import__('setup_manager')
+                
+                if hasattr(setup_manager, 'SetupManager'):
+                    manager = setup_manager.SetupManager()
+                    status = manager.get_setup_status()
+                    self.logger.debug(f"Setup status: {status}")
+                    return status
+                
+        except Exception as e:
+            self.logger.warning(f"Could not use setup_manager: {e}")
+        
+        # Fallback to simple check
+        return {
+            "setup_complete": self.setup_complete_file.exists() and self.config_file.exists(),
+            "config_exists": self.config_file.exists(),
+            "needs_setup": not (self.setup_complete_file.exists() and self.config_file.exists()),
+            "recommendations": ["Run setup GUI if configuration is incomplete"]
+        }
+    
+    def show_setup_choice_dialog(self) -> str:
+        """Show dialog to choose setup method."""
+        root = tk.Tk()
+        root.withdraw()  # Hide main window
+        
+        setup_choice = messagebox.askyesnocancel(
+            "GAJA Setup Required",
+            "GAJA Client needs to be configured before first use.\n\n"
+            "Choose your setup method:\n\n"
+            "✅ YES - Open modern setup GUI (Recommended)\n"
+            "❌ NO - Use quick command-line setup\n"
+            "🚫 CANCEL - Exit and setup manually later",
+            icon="question"
+        )
+        
+        root.destroy()
+        
+        if setup_choice is True:
+            return "gui"
+        elif setup_choice is False:
+            return "cli"
+        else:
+            return "cancel"
+    
+    def launch_setup_gui(self) -> bool:
+        """Launch the modern setup GUI."""
+        try:
+            setup_gui_path = self.client_root / "setup_gui.py"
+            if not setup_gui_path.exists():
+                self.logger.error("setup_gui.py not found")
+                return False
+            
+            self.logger.info("Launching setup GUI...")
+            
+            # Launch setup GUI as subprocess
+            result = subprocess.run([
+                sys.executable, str(setup_gui_path)
+            ], cwd=str(self.client_root))
+            
+            if result.returncode == 0:
+                self.logger.info("Setup GUI completed successfully")
+                return True
+            else:
+                self.logger.warning(f"Setup GUI exited with code: {result.returncode}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error launching setup GUI: {e}")
+            return False
+    
+    def quick_cli_setup(self) -> bool:
+        """Quick command-line setup for basic configuration."""
+        try:
+            print("\n" + "="*50)
+            print("🎤 GAJA Client - Quick Setup")
+            print("="*50)
+            
+            # Server settings
+            print("\n📡 Server Configuration:")
+            server_host = input("Server host [localhost]: ").strip() or "localhost"
+            server_port = input("Server port [8001]: ").strip() or "8001"
+            
+            try:
+                server_port = int(server_port)
+            except ValueError:
+                print("Invalid port, using default 8001")
+                server_port = 8001
+            
+            # Audio device
+            print("\n🎵 Audio Configuration:")
+            print("Available microphones:")
+            devices = self.get_available_audio_devices()
+            for i, device in enumerate(devices):
+                print(f"  {i}: {device['name']}")
+            
+            mic_choice = input(f"Select microphone [0]: ").strip() or "0"
+            try:
+                mic_id = devices[int(mic_choice)]["id"]
+            except (ValueError, IndexError):
+                print("Invalid choice, using default microphone")
+                mic_id = "default"
+            
+            # Language
+            print("\n🗣️ Language Configuration:")
+            languages = ["pl-PL", "en-US", "de-DE", "fr-FR"]
+            for i, lang in enumerate(languages):
+                print(f"  {i}: {lang}")
+            
+            lang_choice = input("Select language [0]: ").strip() or "0"
+            try:
+                language = languages[int(lang_choice)]
+            except (ValueError, IndexError):
+                print("Invalid choice, using Polish")
+                language = "pl-PL"
+            
+            # Create configuration
+            config = self.create_default_config()
+            config["server"]["host"] = server_host
+            config["server"]["port"] = server_port
+            config["server"]["websocket_url"] = f"ws://{server_host}:{server_port}/ws/client1"
+            config["audio"]["input_device"] = mic_id
+            config["speech"]["language"] = language
+            config["recognition"]["language"] = language.split("-")[0]
+            
+            # Save configuration
+            self.save_config(config)
+            self.mark_setup_complete("cli")
+            
+            print("\n✅ Setup completed successfully!")
+            print(f"Configuration saved to: {self.config_file}")
+            print("\nYou can now start GAJA Client normally.")
+            
+            return True
+            
+        except KeyboardInterrupt:
+            print("\n\nSetup cancelled by user")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error in CLI setup: {e}")
+            return False
     
     def check_python_version(self) -> bool:
         """Check if Python version is compatible."""
@@ -107,8 +254,8 @@ class GajaClientStarter:
         try:
             import sounddevice as sd
             devices = sd.query_devices()
-            input_devices = [d for d in devices if d['max_input_channels'] > 0]
-            output_devices = [d for d in devices if d['max_output_channels'] > 0]
+            input_devices = [d for d in devices if d.get('max_input_channels', 0) > 0]
+            output_devices = [d for d in devices if d.get('max_output_channels', 0) > 0]
             
             if not input_devices:
                 issues.append("No microphone found")
@@ -136,7 +283,7 @@ class GajaClientStarter:
             input_devices = [
                 {
                     "id": i,
-                    "name": d['name'],
+                    "name": d.get('name', f'Device {i}'),
                     "channels": d.get('max_input_channels', 0)
                 }
                 for i, d in enumerate(devices) 
@@ -303,7 +450,7 @@ class GajaClientStarter:
         
         # Create main frame
         main_frame = ttk.Frame(root, padding="20")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=0, column=0, sticky="nsew")
         
         # Title
         title_label = ttk.Label(main_frame, text="🤖 GAJA Assistant Setup", 
@@ -439,8 +586,24 @@ class GajaClientStarter:
             json.dump(config, f, indent=2)
         self.logger.info(f"Configuration saved to {self.config_file}")
     
-    def mark_setup_complete(self):
+    def mark_setup_complete(self, method: str = "unknown"):
         """Mark setup as complete."""
+        try:
+            # Try to use setup_manager for creating lock file
+            setup_manager_path = self.client_root / "setup_manager.py"
+            if setup_manager_path.exists():
+                sys.path.insert(0, str(self.client_root))
+                setup_manager = __import__('setup_manager')
+                
+                if hasattr(setup_manager, 'SetupManager'):
+                    manager = setup_manager.SetupManager()
+                    manager.create_lock_file(method)
+                    self.logger.info("Setup marked as complete using setup_manager")
+                    return
+        except Exception as e:
+            self.logger.warning(f"Could not use setup_manager: {e}")
+        
+        # Fallback to simple lock file
         with open(self.setup_complete_file, 'w') as f:
             f.write("setup_complete")
         self.logger.info("Setup marked as complete")
@@ -560,8 +723,8 @@ class GajaClientStarter:
         print()
     
     async def run(self, args):
-        """Main run method."""
-        self.logger.info("GAJA Client Starter - Beta Release")
+        """Main run method with enhanced setup management."""
+        self.logger.info("GAJA Client Starter - Enhanced Release")
         
         # Step 1: Check Python version
         if not self.check_python_version():
@@ -575,35 +738,50 @@ class GajaClientStarter:
         if not args.skip_checks:
             self.check_system_requirements()
         
-        # Step 4: Check if first run and show setup UI
-        if self.is_first_run() and not args.skip_setup:
-            self.logger.info("First run detected, showing setup UI")
+        # Step 4: Enhanced setup status checking
+        setup_status = self.check_setup_status()
+        
+        if setup_status["needs_setup"] and not args.skip_setup:
+            self.logger.info("Setup required - configuration incomplete or missing")
             
-            config = self.create_default_config()
-            setup_data = self.show_setup_ui()
+            # Show setup choice dialog
+            setup_choice = self.show_setup_choice_dialog()
             
-            if not setup_data:
+            if setup_choice == "cancel":
                 self.logger.info("Setup cancelled by user")
                 return 0
-            
-            config = self.apply_setup_to_config(setup_data, config)
-            self.save_config(config)
-            self.mark_setup_complete()
-        else:
-            # Load existing configuration
-            config = self.load_config()
+            elif setup_choice == "gui":
+                # Launch setup GUI
+                if self.launch_setup_gui():
+                    self.logger.info("Setup GUI completed, reloading configuration")
+                    # Reload setup status after GUI completion
+                    setup_status = self.check_setup_status()
+                    if setup_status["needs_setup"]:
+                        self.logger.error("Setup still incomplete after GUI")
+                        return 1
+                else:
+                    self.logger.error("Setup GUI failed or cancelled")
+                    return 1
+            elif setup_choice == "cli":
+                # Run CLI setup
+                if not self.quick_cli_setup():
+                    self.logger.error("CLI setup failed or cancelled")
+                    return 1
         
-        # Step 5: Override config with command line arguments
+        # Step 5: Load configuration
+        config = self.load_config()
+        
+        # Step 6: Override config with command line arguments
         if args.server_host:
             config["server"]["host"] = args.server_host
-            config["server"]["websocket_url"] = f"ws://{args.server_host}:{config['server']['port']}/ws"
+            config["server"]["websocket_url"] = f"ws://{args.server_host}:{config['server']['port']}/ws/client1"
         
         if args.server_port:
             config["server"]["port"] = args.server_port
-            config["server"]["websocket_url"] = f"ws://{config['server']['host']}:{args.server_port}/ws"
+            config["server"]["websocket_url"] = f"ws://{config['server']['host']}:{args.server_port}/ws/client1"
         
-        # Step 6: Check server reachability (if not in dev mode)
-        if not args.dev:
+        # Step 7: Check server reachability (if not in dev mode)
+        if not args.dev and not args.force:
             host = config["server"]["host"]
             port = config["server"]["port"]
             if not self.check_server_reachability(host, port):
@@ -613,13 +791,13 @@ class GajaClientStarter:
                     self.logger.error("Use --force to start anyway")
                     return 1
         
-        # Step 7: Print startup info
+        # Step 8: Print startup info
         self.print_startup_info(config, args.dev)
         
-        # Step 8: Start client
+        # Step 9: Start client
         try:
-            await self.start_client(config, development=args.dev)
-            return 0
+            success = await self.start_client(config, development=args.dev)
+            return 0 if success else 1
         except KeyboardInterrupt:
             self.logger.info("Client stopped by user")
             return 0

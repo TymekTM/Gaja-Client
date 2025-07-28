@@ -182,3 +182,6 @@ cython_debug/
 /.hf_cache
 client_config.json
 .setup_complete
+*.lock
+/logs
+client_config.json.backup
