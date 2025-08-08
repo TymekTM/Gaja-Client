@@ -2568,407 +2568,88 @@ class ClientApp:
         except Exception as e:
             logger.error(f"Error starting wakeword monitoring: {e}")
 
-    # ...existing code...
+import threading, time, requests, uuid, random, os, json
+from datetime import datetime, timezone
 
+HABIT_SERVER = os.environ.get('GAJA_SERVER_URL','http://localhost:8000/api/v1/habit')
 
-class StatusHTTPHandler(BaseHTTPRequestHandler):
-    """HTTP handler dla overlay status API."""
+class HabitIntegration:
+    def __init__(self):
+        self.session = requests.Session()
+        self.running = False
+        self.thread: threading.Thread | None = None
 
-    def __init__(self, client_app, *args, **kwargs):
-        self.client_app = client_app
-        super().__init__(*args, **kwargs)
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
 
-    def do_GET(self):
-        """Obsługa GET requests."""
-        if self.path == "/api/status":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
 
-            status = {
-                "status": self.client_app.get_current_status(),
-                "text": self.client_app.last_tts_text,
-                "is_listening": self.client_app.recording_command,
-                "is_speaking": self.client_app.tts_playing,
-                "wake_word_detected": self.client_app.wake_word_detected,
-                "overlay_visible": self.client_app.overlay_visible,
-                "monitoring": self.client_app.monitoring_wakeword,
-                "tts_playing": self.client_app.tts_playing,
-                "last_tts": self.client_app.last_tts_text,
+    def _post(self, path, payload):
+        try:
+            r = self.session.post(f"{HABIT_SERVER}{path}", json=payload, timeout=3)
+            return r.json()
+        except Exception:
+            return None
+
+    def _loop(self):
+        while self.running:
+            context = self._simulate_context()
+            # send event occasionally
+            if random.random() < 0.7:
+                evt = {
+                    'verb': 'open', 'object': 'spotify_playlist',
+                    'props': context,
+                    'source': 'client',
+                    'confidence': 1.0
+                }
+                self._post('/events', evt)
+            decision_resp = self._post('/decide', context)
+            if decision_resp and decision_resp.get('decision'):
+                d = decision_resp['decision']
+                print(f"[Habit] Suggestion: {d['action']['verb']} {d['action']['object']} reason={d.get('reason')}")
+                accepted = self._execute_action(d['action'])
+                outcome = 'accept' if accepted else 'reject'
+                self._post('/feedback', {'decision_id': d['id'], 'outcome': outcome, 'latency_ms': 50})
+            # Telemetry check
+            if random.random() < 0.2:
+                tele = self._post('/telemetry', {})
+                if tele:
+                    print(f"[Habit] Telemetry habits={len(tele.get('habits',[]))}")
+            time.sleep(5)
+
+    def _simulate_context(self):
+        now = datetime.now(timezone.utc)
+        return {
+            'timestamp': now.isoformat(),
+            'features': {
+                'hour_cos': 0.5,
+                'hour_sin': 0.5,
+                'dow_{}' .format(now.weekday()): 1,
+                'location_office': 1,
+                'device_pc': 1,
+                'voice_channel_active': 1,
+                'voicemeeter_a1': 1
             }
-            self.wfile.write(json.dumps(status).encode())
+        }
 
-        elif self.path == "/status/stream":
-            # SSE endpoint for real-time status updates
-            self.send_response(200)
-            self.send_header("Content-type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
+    def _execute_action(self, action: dict):
+        # simulate executing spotify playlist
+        if action.get('verb') == 'open' and action.get('object') == 'spotify_playlist':
+            # placeholder success probability
+            return True
+        return False
 
-            # Add client to SSE list
-            self.client_app.add_sse_client(self)
+habit_integration = HabitIntegration()
 
-            # Send initial status
-            initial_status = {
-                "status": self.client_app.current_status,
-                "text": self.client_app.last_tts_text,
-                "is_listening": self.client_app.recording_command,
-                "is_speaking": self.client_app.tts_playing,
-                "wake_word_detected": self.client_app.wake_word_detected,
-                "overlay_visible": self.client_app.overlay_visible,
-            }
-
-            try:
-                message = f"data: {json.dumps(initial_status)}\n\n"
-                self.wfile.write(message.encode())
-                self.wfile.flush()
-
-                logger.info("SSE client connected")
-
-                # Keep connection alive by monitoring for client disconnect
-                import threading
-
-                def monitor_connection():
-                    try:
-                        # Send heartbeat every 30 seconds to detect disconnection
-                        import time
-
-                        while True:
-                            time.sleep(30)
-                            try:
-                                heartbeat = 'data: {"heartbeat": true}\n\n'
-                                self.wfile.write(heartbeat.encode())
-                                self.wfile.flush()
-                            except:
-                                logger.info("SSE client disconnected")
-                                self.client_app.remove_sse_client(self)
-                                break
-                    except:
-                        self.client_app.remove_sse_client(self)
-
-                # Start heartbeat thread to keep connection alive
-                heartbeat_thread = threading.Thread(
-                    target=monitor_connection, daemon=True
-                )
-                heartbeat_thread.start()
-
-                return  # Don't close connection immediately
-
-            except Exception as e:
-                logger.error(f"SSE connection error: {e}")
-                self.client_app.remove_sse_client(self)
-
-        elif self.path == "/api/trigger_wakeword":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-
-            # Add command to queue
-            command = {"type": "test_wakeword"}
-            self.client_app.command_queue.put(command)
-
-            self.wfile.write(json.dumps({"success": True}).encode())
-
-        elif self.path == "/api/audio_devices":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-
-            try:
-                if self.client_app.settings_manager:
-                    devices = self.client_app.settings_manager.get_audio_devices()
-                    self.wfile.write(json.dumps(devices).encode())
-                else:
-                    # Fallback if settings manager not available
-                    devices = self.client_app.list_available_audio_devices()
-                    fallback_response = {
-                        "input_devices": devices,
-                        "output_devices": devices,
-                    }
-                    self.wfile.write(json.dumps(fallback_response).encode())
-            except Exception as e:
-                logger.error(f"Error getting audio devices: {e}")
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-
-        elif self.path == "/api/connection_status":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-
-            try:
-                if self.client_app.settings_manager:
-                    status = self.client_app.settings_manager.get_connection_status()
-                    self.wfile.write(json.dumps(status).encode())
-                else:
-                    # Fallback status
-                    status = {
-                        "connected": self.client_app.websocket is not None,
-                        "error": "Settings manager not available",
-                    }
-                    self.wfile.write(json.dumps(status).encode())
-            except Exception as e:
-                logger.error(f"Error getting connection status: {e}")
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-
-        elif self.path == "/api/current_settings":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-
-            try:
-                if self.client_app.settings_manager:
-                    settings = self.client_app.settings_manager.load_settings()
-                    self.wfile.write(json.dumps(settings).encode())
-                else:
-                    # Fallback to client config
-                    self.wfile.write(json.dumps(self.client_app.config).encode())
-            except Exception as e:
-                logger.error(f"Error getting current settings: {e}")
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-
-        elif self.path == "/api/test_microphone":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-
-            try:
-                # Test microphone by recording a short sample
-                if self.client_app.audio_recorder:
-                    # This is a simplified test - in reality you'd want to record and analyze
-                    test_result = {
-                        "success": True,
-                        "message": "Mikrofon jest dostępny",
-                        "device_info": self.client_app.list_available_audio_devices(),
-                    }
-                else:
-                    test_result = {
-                        "success": False,
-                        "message": "Rejestrator audio nie jest dostępny",
-                        "device_info": self.client_app.list_available_audio_devices(),
-                    }
-
-                self.wfile.write(json.dumps(test_result).encode())
-            except Exception as e:
-                logger.error(f"Error testing microphone: {e}")
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps({"error": str(e), "success": False}).encode()
-                )
-
-        elif self.path == "/api/test_tts":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-
-            try:
-                # Test TTS by speaking a short phrase
-                if self.client_app.tts:
-                    command = {
-                        "type": "test_tts",
-                        "text": "Test syntezatora mowy. Jeśli słyszysz tę wiadomość, TTS działa poprawnie.",
-                    }
-                    self.client_app.command_queue.put(command)
-
-                    test_result = {
-                        "success": True,
-                        "message": "Test TTS został uruchomiony",
-                    }
-                else:
-                    test_result = {
-                        "success": False,
-                        "message": "Moduł TTS nie jest dostępny",
-                    }
-
-                self.wfile.write(json.dumps(test_result).encode())
-            except Exception as e:
-                logger.error(f"Error testing TTS: {e}")
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps({"error": str(e), "success": False}).encode()
-                )
-
-        elif self.path == "/settings.html":
-            # Serve settings.html file
-            try:
-                settings_path = Path(__file__).parent / "resources" / "settings.html"
-                if settings_path.exists():
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/html; charset=utf-8")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.send_header(
-                        "Cache-Control", "no-cache, no-store, must-revalidate"
-                    )
-                    self.send_header("Pragma", "no-cache")
-                    self.send_header("Expires", "0")
-                    self.end_headers()
-
-                    with open(settings_path, encoding="utf-8") as f:
-                        content = f.read()
-                    self.wfile.write(content.encode("utf-8"))
-                    logger.info(f"Served settings.html from {settings_path}")
-                else:
-                    logger.error(f"Settings file not found at {settings_path}")
-                    self.send_response(404)
-                    self.send_header("Content-type", "text/html; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(b"<h1>Settings file not found</h1>")
-            except Exception as e:
-                logger.error(f"Error serving settings.html: {e}")
-                self.send_response(500)
-                self.send_header("Content-type", "text/html; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(f"<h1>Error: {e}</h1>".encode())
-
-        elif self.path == "/gaja.ico":
-            # Serve gaja.ico file
-            try:
-                icon_path = Path(__file__).parent.parent / "gaja.ico"
-                if icon_path.exists():
-                    self.send_response(200)
-                    self.send_header("Content-type", "image/x-icon")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.send_header("Cache-Control", "public, max-age=3600")
-                    self.end_headers()
-                    with open(icon_path, "rb") as f:
-                        self.wfile.write(f.read())
-                    logger.info(f"Served gaja.ico from {icon_path}")
-                else:
-                    logger.error(f"Icon file not found at {icon_path}")
-                    self.send_response(404)
-                    self.end_headers()
-            except Exception as e:
-                logger.error(f"Error serving gaja.ico: {e}")
-                self.send_response(500)
-                self.end_headers()
-
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def do_POST(self):
-        """Obsługa POST requests."""
-        if self.path == "/api/update_status":
-            content_length = int(self.headers["Content-Length"])
-            post_data = self.rfile.read(content_length)
-
-            try:
-                data = json.loads(post_data.decode("utf-8"))
-                new_status = data.get("status", "")
-
-                if new_status:
-                    command = {
-                        "type": "status_update",
-                        "status": new_status,
-                    }
-                    self.client_app.command_queue.put(command)
-
-                self.send_response(200)
-                self.send_header("Content-type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": True}).encode())
-
-            except Exception as e:
-                self.send_response(400)
-                self.send_header("Content-type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-
-        elif self.path == "/api/save_settings":
-            content_length = int(self.headers["Content-Length"])
-            post_data = self.rfile.read(content_length)
-
-            try:
-                data = json.loads(post_data.decode("utf-8"))
-                settings = data.get("settings", {})
-
-                if self.client_app.settings_manager:
-                    success = self.client_app.settings_manager.save_settings(settings)
-
-                    self.send_response(200)
-                    self.send_header("Content-type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"success": success}).encode())
-                else:
-                    self.send_response(500)
-                    self.send_header("Content-type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(
-                        json.dumps({"error": "Settings manager not available"}).encode()
-                    )
-
-            except Exception as e:
-                logger.error(f"Error saving settings: {e}")
-                self.send_response(400)
-                self.send_header("Content-type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def do_OPTIONS(self):
-        """Obsługa CORS preflight."""
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        """Override to reduce HTTP logging verbosity."""
-        # Only log errors and important requests
-        if "error" in (format % args).lower() or "500" in (format % args):
-            logger.warning(f"HTTP: {format % args}")
-        # Silently ignore routine requests like status checks
-        elif not any(x in (format % args) for x in ["/api/status", "/status/stream"]):
-            logger.debug(f"HTTP: {format % args}")
-
-
-async def main():
-    """Główna funkcja klienta."""
-    print("Starting GAJA Client...")
-
-    app = ClientApp()
-
-    try:
-        await app.run()
-
-    except asyncio.CancelledError:
-        logger.info("Client cancelled")
-    except KeyboardInterrupt:
-        logger.info("Client interrupted by user")
-    except Exception as e:
-        logger.error(f"Unexpected error in main: {e}")
-    finally:
-        logger.info("Client shutdown")
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nClient stopped by user")
-    except Exception as e:
-        print(f"Fatal error: {e}")
+# start on import
+try:
+    habit_integration.start()
+except Exception:
+    pass
