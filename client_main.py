@@ -17,13 +17,7 @@ import tempfile
 import websockets
 from loguru import logger
 
-# Import pygame for audio playback
-try:
-    import pygame
-    pygame_available = True
-except ImportError:
-    pygame_available = False
-    logger.warning("pygame not available for audio playback")
+# Removing pygame import - using ffplay for all audio playback now
 
 # Configure logging levels to reduce verbosity
 import logging
@@ -842,7 +836,7 @@ class ClientApp:
             if 'data' in response_data and 'tts_audio_b64' in response_data['data']:
                 response_data['data'] = {k: v for k, v in response_data['data'].items() if k != 'tts_audio_b64'}
                 response_data['data']['tts_audio_size'] = f"{len(data['data'].get('tts_audio_b64', ''))} chars"
-            logger.debug(f"AI response data structure: {response_data}")  # Already DEBUG
+            logger.debug(f"AI response data structure: {response_data}")  # Change to DEBUG
 
         # Track message limits and counts if provided
         if "message_limit" in data:
@@ -953,50 +947,10 @@ class ClientApp:
                             await self.speak_text_local(text)
                     finally:
                         self.tts_playing = False
-                            if self.tts and text:
-                                try:
-                                    self.tts_playing = True
-                                    self.update_status("mówię")
-                                    self.last_tts_text = text
-                                    await self.tts.speak(text)
-                                    logger.info("Fallback: Used local TTS with server text")
-                                except Exception as local_tts_e:
-                                    logger.error(f"Local TTS fallback error: {local_tts_e}")
-                        finally:
-                            self.tts_playing = False
-                            self.wake_word_detected = False
-                            self.recording_command = False
-                            await self.hide_overlay()
-                            self.update_status("słucham")
-                            
-                    elif self.tts and text:
-                        # No server audio, use local TTS with server text
-                        try:
-                            self.tts_playing = True
-                            self.update_status("mówię")
-                            # Ensure text is set during TTS playback
-                            self.last_tts_text = text
-                            await self.tts.speak(text)
-                            logger.info("Local TTS response played")
-                        except Exception as tts_e:
-                            logger.error(f"TTS error: {tts_e}")
-                        finally:
-                            self.tts_playing = False
-                            self.wake_word_detected = (
-                                False  # Reset wakeword flag after speaking
-                            )
-                            self.recording_command = False  # Reset recording flag
-                            # Hide overlay after speaking
-                            await self.hide_overlay()
-                            self.update_status(
-                                "słucham"
-                            )  # Return to listening immediately
-                    else:
-                        logger.warning("No TTS available and no server audio")
                         self.wake_word_detected = False
-                        self.update_status(
-                            "słucham"
-                        )  # Return to listening even without TTS
+                        self.recording_command = False
+                        await self.hide_overlay()
+                        self.update_status("słucham")
                 else:
                     logger.warning("No text in AI response")
 
@@ -1091,89 +1045,21 @@ class ClientApp:
                 # Show overlay
                 await self.show_overlay()
                 
-                # Play TTS for clarification - prioritize server audio
-                if tts_audio_b64:
-                    try:
-                        # Server provided audio - try to play it
-                        import base64
-                        import tempfile
-                        
-                        audio_data = base64.b64decode(tts_audio_b64)
-                        logger.debug(f"Playing clarification TTS audio: {len(audio_data)} bytes")
-                        
+                # Play TTS for clarification using unified helper
+                self.tts_playing = True
+                try:
+                    if tts_audio_b64:
                         # Get volume from server TTS config
                         tts_config = data.get("tts_config", {})
                         volume = tts_config.get("volume", 1.0)
-                        
-                        # Save to temporary file and play with pygame
-                        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
-                            temp_file.write(audio_data)
-                            temp_file_path = temp_file.name
-                        
-                        try:
-                            import pygame
-                            pygame.mixer.init()
-                            pygame.mixer.music.load(temp_file_path)
-                            pygame.mixer.music.set_volume(min(volume, 1.0))  # pygame volume is 0.0-1.0
-                            pygame.mixer.music.play()
-                            
-                            # Wait for audio to finish
-                            while pygame.mixer.music.get_busy():
-                                await asyncio.sleep(0.1)
-                            
-                            logger.info("Server clarification TTS audio finished")
-                            
-                            # After TTS completion, restart recording and play keyword detection sound
-                            await self.restart_recording_after_clarification()
-                        
-                        except Exception as pygame_err:
-                            logger.error(f"Failed to play server clarification audio with pygame: {pygame_err}")
-                            # Fallback to local TTS
-                            if self.tts:
-                                try:
-                                    self.tts_playing = True
-                                    await self.tts.speak(question)
-                                    logger.info("Fallback clarification TTS completed")
-                                    # After TTS completion, restart recording and play keyword detection sound
-                                    await self.restart_recording_after_clarification()
-                                except Exception as tts_err:
-                                    logger.error(f"Fallback clarification TTS failed: {tts_err}")
-                                finally:
-                                    self.tts_playing = False
-                        finally:
-                            # Clean up temp file
-                            try:
-                                import os
-                                os.unlink(temp_file_path)
-                            except:
-                                pass
-                    
-                    except Exception as audio_err:
-                        logger.error(f"Failed to process server clarification audio: {audio_err}")
-                        # Fallback to local TTS
-                        if self.tts:
-                            try:
-                                self.tts_playing = True
-                                await self.tts.speak(question)
-                                logger.info("Fallback clarification TTS completed")
-                            except Exception as tts_err:
-                                logger.error(f"Fallback clarification TTS failed: {tts_err}")
-                            finally:
-                                self.tts_playing = False
-                
-                else:
-                    # No server audio, use local TTS
-                    if self.tts:
-                        try:
-                            self.tts_playing = True
-                            await self.tts.speak(question)
-                            logger.info("Local clarification TTS completed")
-                        except Exception as tts_err:
-                            logger.error(f"Local clarification TTS failed: {tts_err}")
-                        finally:
-                            self.tts_playing = False
+                        await self.play_server_tts(tts_audio_b64, volume)
                     else:
-                        logger.warning("No TTS available for clarification")
+                        # Use local TTS
+                        await self.speak_text_local(question)
+                finally:
+                    self.tts_playing = False
+                    # After TTS completion, restart recording and play keyword detection sound
+                    await self.restart_recording_after_clarification()
                 
                 # After TTS finishes, start listening for clarification answer
                 self.update_status("czekam na odpowiedź")
@@ -1193,20 +1079,10 @@ class ClientApp:
             
             # Play keyword detection sound if available
             try:
-                import pygame
-                # Path to keyword detection sound (you may need to add this file)
-                keyword_sound_path = "resources/sounds/keyword_detected.wav"
-                if pygame_available:  # Use global variable
-                    pygame.mixer.init()
-                    try:
-                        pygame.mixer.Sound(keyword_sound_path).play()
-                        logger.debug("Played keyword detection sound")
-                    except:
-                        # Fallback - create a simple beep sound
-                        logger.debug("Using system beep as keyword sound")
-                        import winsound
-                        winsound.Beep(800, 200)  # 800Hz for 200ms
-                    pygame.mixer.quit()
+                # Use system beep for keyword detection
+                logger.debug("Using system beep as keyword sound")
+                import winsound
+                winsound.Beep(800, 200)  # 800Hz for 200ms
             except Exception as sound_err:
                 logger.debug(f"Could not play keyword sound: {sound_err}")
             

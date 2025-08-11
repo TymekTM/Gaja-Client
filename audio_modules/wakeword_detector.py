@@ -139,12 +139,12 @@ class UnifiedWakewordDetector:
     """Single wakeword detector implementation (replaces optimized / advanced / simple).
 
     Features:
-    - openWakeWord ONNX inference (if available)
-    - Energy fallback when model missing
+    - openWakeWord ONNX inference (required)
     - Command audio capture with simple VAD
     - Whisper integration
     - Threaded detection + async-safe callbacks
     - Configuration update at runtime
+    - No energy fallback - proper model required
     """
 
     def __init__(self, config: dict, callback: Callable[[str], Any]):
@@ -217,7 +217,7 @@ class UnifiedWakewordDetector:
             base_dir = get_base_path()
             model_dir = os.path.join(base_dir, "resources", "openWakeWord")
             if not os.path.isdir(model_dir):
-                logger.warning("openWakeWord model directory missing -> energy fallback")
+                logger.warning("openWakeWord model directory missing - wakeword detection will fail")
                 return
             model_files = [
                 os.path.join(model_dir, f)
@@ -225,7 +225,7 @@ class UnifiedWakewordDetector:
                 if f.endswith(".onnx") and not any(x in f.lower() for x in ["preprocessor", "embedding", "melspectrogram"])
             ]
             if not model_files:
-                logger.warning("No ONNX wakeword models found -> energy fallback")
+                logger.warning("No ONNX wakeword models found - wakeword detection will fail")
                 return
             kwargs = {"wakeword_models": model_files, "inference_framework": "onnx"}
             melspec = os.path.join(model_dir, "melspectrogram.onnx")
@@ -295,7 +295,7 @@ class UnifiedWakewordDetector:
                             logger.error(f"Model prediction error: {e}")
                     else:
                         # No fallback - fail if wakeword model not available
-                        logger.error("Wakeword model not available and no fallback configured")
+                        logger.error("Wakeword model not available")
                         raise RuntimeError("Wakeword model not initialized - cannot detect wake words")
         except Exception as e:
             if hasattr(sd, "PortAudioError") and isinstance(e, getattr(sd, "PortAudioError")):  # type: ignore[attr-defined]
