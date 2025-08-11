@@ -43,11 +43,29 @@ class TTSPlayback:
                 stderr=asyncio.subprocess.DEVNULL
             )
             
+            self.is_playing = True
+            
             # Write audio data to ffplay stdin
-            stdout, stderr = await process.communicate(input=audio_data)
+            try:
+                stdout, stderr = await process.communicate(input=audio_data)
+            except asyncio.CancelledError:
+                # Handle interruption gracefully
+                try:
+                    process.terminate()
+                    await process.wait()
+                except:
+                    pass
+                self.is_playing = False
+                return False
+            
+            self.is_playing = False
             
             if process.returncode == 0:
                 logger.debug("Server TTS audio played successfully via ffplay")
+                return True
+            elif process.returncode == 123:
+                # 123 usually means user interruption - not an error
+                logger.debug("TTS playback interrupted by user")
                 return True
             else:
                 logger.warning(f"ffplay returned code {process.returncode}")
@@ -55,6 +73,7 @@ class TTSPlayback:
                 
         except Exception as e:
             logger.error(f"Error playing server TTS audio: {e}")
+            self.is_playing = False
             return False
 
     async def speak_text_local(self, text: str) -> bool:
@@ -100,9 +119,8 @@ class TTSPlayback:
 
     def stop(self):
         """Stop any ongoing TTS playback."""
-        # TODO: Implement process termination for ffplay if needed
         self.is_playing = False
-        if hasattr(self.local_tts, 'cancel'):
+        if self.local_tts and hasattr(self.local_tts, 'cancel'):
             try:
                 self.local_tts.cancel()
             except Exception as e:

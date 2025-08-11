@@ -79,7 +79,7 @@ class GajaClient:
             },
             "whisper": {"model": "base", "language": "pl"},
             "overlay": {
-                "enabled": True,
+                "enabled": False,  # Wyłączone domyślnie
                 "position": "top-right",
                 "auto_hide_delay": 10,
             },
@@ -114,8 +114,13 @@ class GajaClient:
             self.overlay.start_http_server()
             await self.overlay.start_websocket_server()
             
-            # Start external overlay
-            await self.overlay.start_overlay()
+            # Start external overlay tylko jeśli włączone w konfiguracji
+            overlay_config = self.config.get("overlay", {})
+            if overlay_config.get("enabled", False):
+                await self.overlay.start_overlay()
+                logger.info("Overlay enabled and started")
+            else:
+                logger.info("Overlay disabled in configuration")
             
             self.update_status("Ready")
             logger.info("✅ All client components initialized successfully")
@@ -138,10 +143,27 @@ class GajaClient:
         try:
             from audio_modules.optimized_whisper_asr import create_optimized_whisper_async
             whisper_config = self.config.get("whisper", {})
-            self.whisper_asr = await create_optimized_whisper_async(whisper_config)
+            # Przekazuj parametry bezpośrednio, nie jako dict
+            model_size = whisper_config.get("model", "base")
+            language = whisper_config.get("language", "pl")
+            device = whisper_config.get("device", None)
+            self.whisper_asr = await create_optimized_whisper_async(
+                model_size=model_size, device=device, language=language
+            )
             logger.info("Whisper ASR initialized")
         except ImportError as e:
             logger.warning(f"Whisper ASR not available: {e}")
+        except Exception as e:
+            logger.error(f"Error initializing Whisper ASR: {e}")
+            logger.info("CUDA libraries not found - using CPU")
+            # Fallback: próbuj z CPU
+            try:
+                self.whisper_asr = await create_optimized_whisper_async(
+                    model_size="base", device="cpu", language="pl"
+                )
+                logger.info("Whisper ASR initialized with CPU fallback")
+            except Exception as fallback_e:
+                logger.error(f"Whisper ASR fallback also failed: {fallback_e}")
         
         try:
             from audio_modules.wakeword_detector import create_wakeword_detector
@@ -213,7 +235,7 @@ class GajaClient:
         try:
             # Keep running until stopped
             while self.running:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)  # Reduced from 1 second to 100ms for better responsiveness
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt")
         finally:
@@ -242,6 +264,16 @@ class GajaClient:
             await self.handlers.handle_daily_briefing(data)
         elif message_type == "handshake":
             await self.handlers.handle_handshake(data)
+        elif message_type == "handshake_response":
+            # Odpowiedź na handshake - można dodać logikę obsługi
+            logger.info("Handshake response received from server")
+        elif message_type == "error":
+            error_msg = data.get("message", "Unknown error")
+            logger.error(f"Server error: {error_msg}")
+            # Można dodać obsługę błędów, np. powiadomienie użytkownika
+        elif message_type == "disconnect":
+            logger.info("Server requested disconnect")
+            # Obsługa disconnecta od serwera
         elif message_type == "startup_briefing":
             briefing = data.get("briefing", {})
             await self.handlers.handle_startup_briefing(briefing)
