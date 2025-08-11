@@ -617,20 +617,43 @@ def create_audio_recorder(sample_rate: int = 16000, duration: float = 5.0):
     """Legacy-compatible factory function for audio recorder.
 
     Args:
-        sample_rate: Audio sample rate (not used by OptimizedSpeechRecorder)
-        duration: Recording duration (not used by OptimizedSpeechRecorder)
+        sample_rate: Audio sample rate
+        duration: Recording duration
 
     Returns:
-        Configured OptimizedSpeechRecorder instance
+        Simple audio recorder object
     """
-    from .optimized_wakeword_detector import OptimizedSpeechRecorder
-
-    # Create recorder with only supported parameters
-    recorder = OptimizedSpeechRecorder(device_id=None)
-
-    return recorder
+    # Create a simple recorder wrapper using sounddevice
+    class SimpleAudioRecorder:
+        def __init__(self, sample_rate: int = 16000, duration: float = 5.0):
+            self.sample_rate = sample_rate
+            self.duration = duration
+            
+        def record(self):
+            """Record audio and return numpy array."""
+            try:
+                from .sounddevice_loader import get_sounddevice
+                sd = get_sounddevice()
+                
+                if sd is None:
+                    logger.error("sounddevice not available")
+                    return np.array([])
+                
+                audio = sd.rec(
+                    int(self.duration * self.sample_rate),
+                    samplerate=self.sample_rate,
+                    channels=1,
+                    dtype=np.float32
+                )
+                sd.wait()  # Wait until recording is finished
+                return audio.flatten()
+                
+            except Exception as e:
+                logger.error(f"Recording failed: {e}")
+                return np.array([])
+    
+    return SimpleAudioRecorder(sample_rate, duration)
 
 
 # Maintain optimized factory function names as well
 create_optimized_recorder = create_audio_recorder
-create_optimized_whisper_async = create_whisper_asr

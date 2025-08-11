@@ -326,6 +326,68 @@ class ClientApp:
             logger.error(f"Error initializing components: {e}")
             raise
 
+    # ==================== TTS PLAYBACK HELPERS ====================
+    
+    async def play_server_tts(self, tts_audio_b64: str, volume: float = 1.0):
+        """Play server-provided TTS audio using ffplay (unified approach)."""
+        if not tts_audio_b64:
+            return
+            
+        try:
+            import base64
+            import subprocess
+            import asyncio
+            
+            # Decode audio from base64
+            audio_data = base64.b64decode(tts_audio_b64)
+            logger.debug(f"Playing server TTS audio: {len(audio_data)} bytes")
+            
+            # Use ffplay to play audio directly from stdin
+            ffplay_volume = int(volume * 200)  # Convert to ffplay volume scale
+            process = await asyncio.create_subprocess_exec(
+                "ffplay",
+                "-nodisp",
+                "-autoexit", 
+                "-loglevel", "quiet",
+                "-volume", str(ffplay_volume),
+                "-i", "-",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            
+            # Write audio data to ffplay stdin
+            stdout, stderr = await process.communicate(input=audio_data)
+            
+            if process.returncode == 0:
+                logger.debug("Server TTS audio played successfully via ffplay")
+            else:
+                logger.warning(f"ffplay returned code {process.returncode}")
+                
+        except Exception as e:
+            logger.error(f"Error playing server TTS audio: {e}")
+            # Fallback to local TTS if available
+            if hasattr(self, 'tts') and self.tts:
+                logger.info("Falling back to local TTS")
+                await self.speak_text_local("Błąd odtwarzania audio z serwera")
+
+    async def speak_text_local(self, text: str):
+        """Speak text using local TTS module."""
+        if not hasattr(self, 'tts') or not self.tts:
+            logger.warning("Local TTS not available")
+            return
+            
+        try:
+            self.tts_playing = True
+            await self.tts.speak(text)
+            logger.debug("Local TTS completed successfully")
+        except Exception as e:
+            logger.error(f"Local TTS error: {e}")
+        finally:
+            self.tts_playing = False
+
+    # ==================== END TTS HELPERS ====================
+
     async def start_overlay(self):
         """Uruchom zewnętrzny overlay Tauri."""
         try:
@@ -526,11 +588,11 @@ class ClientApp:
         
         while self.running and not self.server_connected:
             try:
-                logger.info("Attempting to reconnect to server...")
+                logger.debug("Attempting to reconnect to server...")
                 success = await self.connect_to_server_with_retry()
                 
                 if success:
-                    logger.info("Successfully reconnected to server")
+                    logger.debug("Successfully reconnected to server")
                     break
                 else:
                     logger.error("Failed to reconnect to server")
@@ -554,7 +616,7 @@ class ClientApp:
             message_type = data.get("type")
             summary_data = data.get("data", {})
 
-            logger.info(f"Summary response received: {message_type}")
+            logger.debug(f"Summary response received: {message_type}")
 
             # Update overlay with summary type
             self.update_status(f"Summary: {message_type}")
@@ -780,7 +842,7 @@ class ClientApp:
             if 'data' in response_data and 'tts_audio_b64' in response_data['data']:
                 response_data['data'] = {k: v for k, v in response_data['data'].items() if k != 'tts_audio_b64'}
                 response_data['data']['tts_audio_size'] = f"{len(data['data'].get('tts_audio_b64', ''))} chars"
-            logger.debug(f"AI response data structure: {response_data}")  # Change to DEBUG
+            logger.debug(f"AI response data structure: {response_data}")  # Already DEBUG
 
         # Track message limits and counts if provided
         if "message_limit" in data:
@@ -878,75 +940,19 @@ class ClientApp:
                     # Show overlay immediately when starting TTS
                     await self.show_overlay()
 
-                    # Play TTS response - prioritize server-generated audio
-                    if tts_audio_b64:
-                        try:
-                            # Server provided audio - try to play it
-                            import base64
-                            import tempfile
-                            
-                            # Decode audio from base64
-                            audio_data = base64.b64decode(tts_audio_b64)
-                            logger.debug(f"Received TTS audio: {len(audio_data)} bytes")
-                            
-                            # Save to temporary file and play
-                            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp_file:
-                                tmp_file.write(audio_data)
-                                tmp_file_path = tmp_file.name
-                            
-                            # Try to play audio file directly with pygame
-                            self.tts_playing = True
-                            self.update_status("mówię")
-                            self.last_tts_text = text
-                            
+                    # Play TTS response using unified helper
+                    self.tts_playing = True
+                    try:
+                        if tts_audio_b64:
                             # Get volume from server TTS config
                             tts_config = data.get("tts_config", {})
                             volume = tts_config.get("volume", 1.0)
-                            
-                            if pygame_available:
-                                try:
-                                    import pygame
-                                    pygame.mixer.init()
-                                    pygame.mixer.music.load(tmp_file_path)
-                                    pygame.mixer.music.set_volume(min(volume, 1.0))  # pygame volume is 0.0-1.0
-                                    pygame.mixer.music.play()
-                                    
-                                    # Wait for audio to finish
-                                    while pygame.mixer.music.get_busy():
-                                        await asyncio.sleep(0.1)
-                                        
-                                    pygame.mixer.quit()
-                                    logger.info("Server TTS audio played successfully with pygame")
-                                except Exception as pygame_err:
-                                    logger.error(f"Pygame playback failed: {pygame_err}")
-                                    # Fallback to system audio player
-                                    import subprocess
-                                    import os
-                                    if os.name == 'nt':  # Windows
-                                        subprocess.run(['powershell', '-c', f'(New-Object Media.SoundPlayer "{tmp_file_path}").PlaySync()'], check=False)
-                                    else:  # Linux/Mac
-                                        subprocess.run(['mpg123', tmp_file_path], check=False)
-                                    logger.info("Server TTS audio played successfully with system player fallback")
-                            else:
-                                # Fallback to system audio player
-                                import subprocess
-                                import os
-                                if os.name == 'nt':  # Windows
-                                    subprocess.run(['powershell', '-c', f'(New-Object Media.SoundPlayer "{tmp_file_path}").PlaySync()'], check=False)
-                                else:  # Linux/Mac
-                                    subprocess.run(['mpg123', tmp_file_path], check=False)
-                                logger.info("Server TTS audio played successfully with system player")
-                            
-                            # Clean up temp file
-                            try:
-                                import os
-                                os.unlink(tmp_file_path)
-                            except:
-                                pass
-                            
-                        except Exception as server_tts_e:
-                            logger.error(f"Server TTS playback error: {server_tts_e}")
-                            # Fallback to local TTS with server text
+                            await self.play_server_tts(tts_audio_b64, volume)
+                        else:
+                            # Fallback to local TTS
+                            await self.speak_text_local(text)
+                    finally:
+                        self.tts_playing = False
                             if self.tts and text:
                                 try:
                                     self.tts_playing = True
@@ -1216,6 +1222,14 @@ class ClientApp:
     async def on_wakeword_detected(self, query: str = None):
         """Callback wywoływany po wykryciu słowa aktywującego i transkrypcji."""
         if query:
+            # Clean and validate query
+            query = query.strip().lower()
+            
+            # Filter out empty queries or just wake word
+            if not query or query in ['gaja', 'hej gaja', 'gaja gaja']:
+                logger.info(f"Empty or wake-word-only query detected: '{query}' - ignoring")
+                return
+            
             # We already have transcribed text from wakeword detector
             logger.info(f"Wakeword detected with query: {query}")
 
@@ -1838,7 +1852,7 @@ class ClientApp:
                     await self.reconnect_task
                 except asyncio.CancelledError:
                     pass
-                logger.info("Reconnect task stopped")
+                logger.debug("Reconnect task stopped")
 
             # Stop system tray first
             if self.tray_manager:
@@ -1952,102 +1966,61 @@ class ClientApp:
             logger.error(f"Error during cleanup: {e}")
 
     async def _load_audio_modules(self):
-        """Lazy load audio modules after dependencies are installed."""
+        """Lazy load audio modules after dependencies are installed.
+
+        Simplified: uses unified wakeword detector implementation only.
+        """
         global TTSModule, WhisperASR, create_whisper_asr, create_audio_recorder, create_wakeword_detector
 
         try:
-            # Load audio modules only after dependencies are ready
-            # Note: These imports will fail if heavy dependencies are not available
-            # That's expected - the dependency_manager will install them first
-            # Try to load optimized audio components first
+            # Unified wakeword detector
             try:
-                from audio_modules.optimized_wakeword_detector import (
-                    create_wakeword_detector,
-                )
-
-                logger.info("✅ Optimized wakeword detector loaded")
+                from audio_modules.wakeword_detector import create_wakeword_detector  # type: ignore
+                logger.info("✅ Unified wakeword detector loaded")
             except ImportError as e:
-                logger.warning(f"Optimized wakeword detector not available: {e}")
-                # Fallback to advanced wakeword detector
-                try:
-                    from audio_modules.advanced_wakeword_detector import (
-                        create_wakeword_detector,
-                    )
+                logger.error(f"Unified wakeword detector not available: {e}")
+                create_wakeword_detector = None
 
-                    logger.info("✅ Advanced wakeword detector loaded as fallback")
-                except ImportError as e2:
-                    logger.warning(f"Advanced wakeword detector not available: {e2}")
-                    # Fallback to simple wakeword detector
-                    try:
-                        from audio_modules.simple_wakeword_detector import (
-                            create_wakeword_detector,
-                        )
-
-                        logger.info(
-                            "✅ Simple wakeword detector loaded as final fallback"
-                        )
-                    except ImportError as e3:
-                        logger.warning(
-                            f"Simple wakeword detector also not available: {e3}"
-                        )
-                        create_wakeword_detector = None
-
+            # Whisper (optimized -> legacy fallback)
             try:
                 from audio_modules.optimized_whisper_asr import (
-                    create_optimized_recorder,
-                    create_optimized_whisper_async,
+                    create_optimized_recorder as create_audio_recorder,
+                    create_whisper_asr,
                 )
-
-                create_audio_recorder = create_optimized_recorder
-                create_whisper_asr = create_optimized_whisper_async
                 logger.info("✅ Optimized Whisper ASR loaded")
             except ImportError as e:
                 logger.warning(f"Optimized Whisper ASR not available: {e}")
-                # Fallback to legacy whisper
                 try:
                     from audio_modules.whisper_asr import (
                         create_audio_recorder,
                         create_whisper_asr,
                     )
-
                     logger.info("✅ Legacy Whisper ASR loaded as fallback")
                 except ImportError as e2:
-                    logger.warning(f"Legacy Whisper ASR not available: {e2}")
+                    logger.error(f"Legacy Whisper ASR not available: {e2}")
                     create_whisper_asr = None
                     create_audio_recorder = None
 
-            # Try enhanced modules if available, fallback to legacy
+            # TTS module
             try:
-                # Use optimized TTS module when available
-                from audio_modules.tts_module import TTSModule
-
+                from audio_modules.tts_module import TTSModule  # type: ignore
                 logger.info("✅ TTS Module loaded")
             except ImportError as e:
                 logger.warning(f"TTS Module not available: {e}")
                 TTSModule = None
 
-            # Optimized Whisper ASR is already loaded above via create_optimized_whisper_async
-            # No need for separate WhisperASR import as we use factory functions
-
-            # Return True if at least some modules loaded
-            basic_modules_available = any(
-                [
-                    create_wakeword_detector is not None,
-                    create_whisper_asr is not None,
-                    TTSModule is not None,
-                ]
-            )
-
+            basic_modules_available = any([
+                create_wakeword_detector is not None,
+                create_whisper_asr is not None,
+                TTSModule is not None,
+            ])
             if basic_modules_available:
-                logger.info("✅ Some audio modules loaded successfully")
+                logger.info("✅ Audio modules loaded successfully")
             else:
                 logger.warning("❌ No audio modules available")
-
             return basic_modules_available
-
         except Exception as e:
             logger.error(f"❌ Failed to load audio modules: {e}")
-            logger.info("Audio features will not be available")
             return False
 
     async def request_proactive_notifications(self):
@@ -2567,6 +2540,14 @@ class ClientApp:
                     logger.info("Wakeword monitoring start scheduled from system tray")
         except Exception as e:
             logger.error(f"Error starting wakeword monitoring: {e}")
+
+# Compatibility entry point for start.py
+async def main():
+    """Async entry point used by start.py.
+    Creates and runs the client application.
+    """
+    app = ClientApp()
+    await app.run()
 
 import threading, time, requests, uuid, random, os, json
 from datetime import datetime, timezone
