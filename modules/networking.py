@@ -169,8 +169,10 @@ def create_voice_command_message(command: str, metadata: Optional[Dict[str, Any]
     """Create a voice command message."""
     return {
         "type": "voice_command",
-        "command": command,
-        "metadata": metadata or {}
+        "data": {
+            "query": command,
+            "context": metadata or {}
+        }
     }
 
 def create_clarification_response_message(response: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
